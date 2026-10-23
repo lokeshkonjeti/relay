@@ -319,6 +319,51 @@ class RelayTest(unittest.TestCase):
         self.assertNotIn("BEGIN KEY", sent)
         self.assertIn("gcs.py", sent)
 
+    def test_antigravity_preset_flags_and_timeout(self):
+        self.tool("agy")
+        out, _ = self.relay("init")
+        self.assertIn("antigravity (data=unverified)", out)
+        cfg = json.loads((self.home / "config.json").read_text())
+        self.assertEqual(cfg["connections"]["antigravity"]["bin"], str(self.bins / "agy"))
+        out, _ = self.relay("run", "review", "is this safe?", "--paths", "src", "--via", "antigravity")
+        self.assertIn("review → antigravity]", out)
+        args = self.agent_calls()[-1]["args"]
+        self.assertEqual(args[0], "-p")
+        self.assertIn("--print-timeout", args)
+        self.assertEqual(args[args.index("--mode") + 1], "plan")
+        self.relay("run", "ui-first-pass", "landing page", "--target", "web/page.tsx", "--via", "antigravity")
+        args = self.agent_calls()[-1]["args"]
+        self.assertEqual(args[args.index("--mode") + 1], "accept-edits")
+        # per-connection timeout wins over the global one, then falls back to Claude
+        self.relay("connect", "set", "antigravity", "timeout_sec=1")
+        out, _ = self.relay("run", "review", "q", "--paths", "src", "--via", "antigravity", FAKE_SLEEP=3)
+        self.assertIn("timed out after 1s", out)
+        self.assertIn("SELF]", out)
+
+    def test_finds_cli_outside_path_and_fresh_init(self):
+        hidden = self.tmp / ".local" / "bin"
+        hidden.mkdir(parents=True)
+        (hidden / "codex").symlink_to(FAKE)
+        out, _ = self.relay("init", OLLAMA_API_KEY="ok-test")
+        self.assertIn("codex (data=unverified)", out)
+        self.assertIn("ollama-api (data=unverified)", out)
+        self.assertIn("not found: gemini, agy", out)
+        cfg = json.loads((self.home / "config.json").read_text())
+        self.assertEqual(cfg["connections"]["codex"]["bin"], str(hidden / "codex"))
+        self.assertEqual(cfg["connections"]["ollama-api"]["base_url"], "https://ollama.com/v1")
+        self.relay("connect", "set", "codex", "data=no-train")
+        out, _ = self.relay("init", "--fresh")
+        self.assertIn("started fresh", out)
+        self.assertEqual(len(list(self.home.glob("config.backup-*.json"))), 1)
+        cfg = json.loads((self.home / "config.json").read_text())
+        self.assertEqual(cfg["connections"]["codex"]["data"], "unverified")
+
+    def test_missing_cli_hint(self):
+        self.base_config()
+        self.relay("connect", "add", "gemini")
+        out, _ = self.relay("doctor")
+        self.assertIn("restart Claude Code", out)
+
     def test_doctor_runs(self):
         self.base_config()
         out, _ = self.relay("doctor", "--probe")

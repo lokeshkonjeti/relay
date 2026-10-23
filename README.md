@@ -23,21 +23,61 @@ small-fix      -> codex-work             docs         -> ollama-local
 - **Almost free to keep installed.** One ~60-token skill description sits in Claude's context. No MCP
   server, no tool schemas. Routing lives in config, so changing models costs zero tokens.
 
-## Install (60 seconds)
+## Quick start
 
-In Claude Code:
+1. **Install and log in to the accounts you want to use** ([below](#install-and-log-in)). Do this
+   first: Relay can only route to tools it can find.
+2. **Quit and reopen Claude Code** so it picks up the new PATH and environment variables.
+3. In Claude Code:
+   ```
+   /plugin marketplace add lokeshkonjeti/relay
+   /plugin install relay@relay-marketplace
+   /relay:setup
+   ```
+   `/relay:setup` detects your CLIs and keys, asks which mode and accounts you want, probes each
+   connection, and prints your routing table. To redo it later: `/relay:setup fresh` (your old
+   config is backed up).
 
-```
-/plugin marketplace add lokeshkonjeti/relay
-/plugin install relay@relay-marketplace
-/relay:setup
-```
-
-`/relay:setup` detects your CLIs and API keys, asks which mode and accounts you want, and prints
-your routing table. Requires Python 3.9+ (preinstalled on macOS and most Linux).
+Requires Python 3.9+ (preinstalled on macOS and most Linux).
 
 The `relay` CLI is on Claude's PATH while the plugin is enabled. To use it in your own terminal too,
-ask Claude to run `relay config path`, then symlink the `cli:` path it prints into `/usr/local/bin`.
+ask Claude to run `relay config path`, then alias the `cli:` path it prints in your shell profile:
+`alias relay="<that path>"`.
+
+## Install and log in
+
+You only need the ones you'll use. Keys go in your shell profile (`~/.zshrc` on macOS), never in a
+repo. Restart Claude Code after changing it.
+
+| Account | Install | Log in once | Relay preset |
+|---|---|---|---|
+| **ChatGPT / Codex** | `npm i -g @openai/codex` | `codex login` | `codex` |
+| **Google, personal** (free, AI Pro, AI Ultra) | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | `agy` | `antigravity` |
+| **Google, work** (Code Assist Standard/Enterprise, Vertex) | `npm i -g @google/gemini-cli` | `gemini`, then pick your work account | `gemini` |
+| **Second Claude account** (e.g. company) | already installed | `CLAUDE_CONFIG_DIR=~/.claude-work claude` | `claude` with `--env CLAUDE_CONFIG_DIR=~/.claude-work` |
+| **Ollama Cloud via the app** | [ollama.com/download](https://ollama.com/download) | `ollama signin` | `ollama-cloud` |
+| **Ollama Cloud via API key** | nothing | key from [ollama.com/settings/keys](https://ollama.com/settings/keys) → `export OLLAMA_API_KEY=...` | `ollama-api` |
+| **Local models** | Ollama app | `ollama pull qwen3:8b` | `ollama-local --model qwen3:8b` |
+| **DeepSeek** | nothing | key from platform.deepseek.com → `export DEEPSEEK_API_KEY=...` | `deepseek` |
+| **Azure OpenAI** | nothing | `export AZURE_OPENAI_API_KEY=...` | `azure-openai --base-url https://<res>.openai.azure.com/openai/v1 --model <deployment>` |
+
+Things that trip people up:
+
+- **Personal Google accounts can't use Gemini CLI.** Since June 18, 2026, Gemini CLI says *"This
+  client is no longer supported for Gemini Code Assist for individuals"*. Use Antigravity (`agy`)
+  instead.
+- **"command not found" right after installing.** Installers add their folder (e.g.
+  `~/.local/bin`) to `~/.zshrc`; open a new terminal or run `source ~/.zshrc`.
+- **Relay says a CLI is "not found" but it works in your terminal.** Claude Code keeps the PATH it
+  started with. Restart it, or pin the path: `relay connect set codex bin=$(which codex)`.
+- **Antigravity hangs.** `agy -p` can hang when run from a script
+  ([issue #318](https://github.com/google-antigravity/antigravity-cli/issues/318)); Relay caps each
+  call at about 6 minutes and falls back. If it keeps happening, `relay connect rm antigravity`.
+- **Two accounts of the same tool.** Give each its own config folder and log in once per folder,
+  e.g. `CODEX_HOME=~/.codex-work codex login`, then
+  `relay connect add codex --name codex-work --env CODEX_HOME=~/.codex-work`.
+
+Check everything with `relay doctor --probe`, which sends a one-word prompt to each connection.
 
 ## How it works
 
@@ -81,8 +121,8 @@ plan, so check before setting it.
 ## Connections
 
 ```
-relay connect presets                      # codex, claude, gemini, ollama-local, ollama-cloud,
-                                           # deepseek, openrouter, openai, azure-openai, cli, ...
+relay connect presets                      # codex, claude, gemini, antigravity, ollama-local,
+                                           # ollama-cloud, ollama-api, deepseek, azure-openai, ...
 relay connect add codex --name codex-work --env CODEX_HOME=~/.codex-work --data no-train
 relay connect add claude --name claude-co --env CLAUDE_CONFIG_DIR=~/.claude-co --data no-train
 relay connect add azure-openai --name corp-azure --base-url https://<res>.openai.azure.com/openai/v1 \

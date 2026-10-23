@@ -1,7 +1,7 @@
 {
   "name": "relay",
   "displayName": "Relay",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Your AI subscriptions, your rules: route Claude Code's grunt work (bulk reading, tests, diagrams, docs, UI tweaks, small fixes) to your other accounts and models (Codex, Gemini, a second Claude, Azure OpenAI, DeepSeek, Ollama) per task, with private/public modes, fallbacks, enterprise policy and audit.",
   "author": {
     "name": "Buddy"

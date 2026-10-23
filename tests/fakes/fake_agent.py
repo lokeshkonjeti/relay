@@ -24,6 +24,10 @@ if log:
                              "CLAUDE_CONFIG_DIR": os.environ.get("CLAUDE_CONFIG_DIR"),
                              "RELAY_DEPTH": os.environ.get("RELAY_DEPTH")}) + "\n")
 
+if os.environ.get("FAKE_SLEEP"):
+    import time
+    time.sleep(float(os.environ["FAKE_SLEEP"]))
+
 if tool in os.environ.get("FAKE_FAIL", "").split(","):
     print("error: usage limit reached (429)", file=sys.stderr)
     sys.exit(1)

@@ -2,59 +2,180 @@
   "codex": {
     "type": "cli",
     "bin": "codex",
-    "args": ["exec", "--skip-git-repo-check", "--sandbox", "{sandbox}", "--output-last-message", "{out}", "{model_args}", "{prompt}"],
-    "model_args": ["-m", "{model}"],
-    "mode_vars": {"read": {"sandbox": "read-only"}, "write": {"sandbox": "workspace-write"}, "edit": {"sandbox": "workspace-write"}},
+    "args": [
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "{sandbox}",
+      "--output-last-message",
+      "{out}",
+      "{model_args}",
+      "{prompt}"
+    ],
+    "model_args": [
+      "-m",
+      "{model}"
+    ],
+    "mode_vars": {
+      "read": {
+        "sandbox": "read-only"
+      },
+      "write": {
+        "sandbox": "workspace-write"
+      },
+      "edit": {
+        "sandbox": "workspace-write"
+      }
+    },
     "output": "file",
     "account_env": "CODEX_HOME",
     "data": "unverified",
     "cost": "subscription",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "OpenAI Codex CLI. Separate accounts: set env CODEX_HOME to a different folder per account and run `CODEX_HOME=... codex login` once."
   },
   "claude": {
     "type": "cli",
     "bin": "claude",
-    "args": ["-p", "{prompt}", "--output-format", "text", "{mode_args}", "{model_args}"],
-    "model_args": ["--model", "{model}"],
+    "args": [
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "text",
+      "{mode_args}",
+      "{model_args}"
+    ],
+    "model_args": [
+      "--model",
+      "{model}"
+    ],
     "mode_args": {
-      "read": ["--allowedTools", "Read,Grep,Glob"],
-      "write": ["--allowedTools", "Read,Grep,Glob,Write,Edit", "--permission-mode", "acceptEdits"],
-      "edit": ["--allowedTools", "Read,Grep,Glob,Write,Edit", "--permission-mode", "acceptEdits"]
+      "read": [
+        "--allowedTools",
+        "Read,Grep,Glob"
+      ],
+      "write": [
+        "--allowedTools",
+        "Read,Grep,Glob,Write,Edit",
+        "--permission-mode",
+        "acceptEdits"
+      ],
+      "edit": [
+        "--allowedTools",
+        "Read,Grep,Glob,Write,Edit",
+        "--permission-mode",
+        "acceptEdits"
+      ]
     },
     "output": "stdout",
     "account_env": "CLAUDE_CONFIG_DIR",
     "data": "unverified",
     "cost": "subscription",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "A second Claude account (e.g. company Team/Enterprise). Set env CLAUDE_CONFIG_DIR to a separate folder and log in there once. Pointless with the same account as your main session."
   },
   "gemini": {
     "type": "cli",
     "bin": "gemini",
-    "args": ["-p", "{prompt}", "{mode_args}", "{model_args}"],
-    "model_args": ["-m", "{model}"],
+    "args": [
+      "-p",
+      "{prompt}",
+      "{mode_args}",
+      "{model_args}"
+    ],
+    "model_args": [
+      "-m",
+      "{model}"
+    ],
     "mode_args": {
-      "read": ["--approval-mode", "default"],
-      "write": ["--approval-mode", "auto_edit"],
-      "edit": ["--approval-mode", "auto_edit"]
+      "read": [
+        "--approval-mode",
+        "default"
+      ],
+      "write": [
+        "--approval-mode",
+        "auto_edit"
+      ],
+      "edit": [
+        "--approval-mode",
+        "auto_edit"
+      ]
     },
     "output": "stdout",
     "account_env": "GEMINI_CLI_HOME",
     "data": "unverified",
     "cost": "subscription",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "experimental": true,
-    "note": "Gemini CLI (Code Assist Standard/Enterprise or API key). Flags vary by version: run `relay doctor --probe` after adding."
+    "note": "Gemini CLI. Works only with Gemini Code Assist Standard/Enterprise, Vertex AI or a paid API key; personal Google accounts must use the 'antigravity' preset."
+  },
+  "antigravity": {
+    "type": "cli",
+    "bin": "agy",
+    "args": [
+      "-p",
+      "{prompt}",
+      "--print-timeout",
+      "5m",
+      "{mode_args}",
+      "{model_args}"
+    ],
+    "model_args": [
+      "--model",
+      "{model}"
+    ],
+    "mode_args": {
+      "read": [
+        "--mode",
+        "plan"
+      ],
+      "write": [
+        "--mode",
+        "accept-edits"
+      ],
+      "edit": [
+        "--mode",
+        "accept-edits"
+      ]
+    },
+    "output": "stdout",
+    "timeout_sec": 360,
+    "data": "unverified",
+    "cost": "subscription",
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
+    "experimental": true,
+    "note": "Google Antigravity CLI (agy) for personal Google accounts (free, AI Pro, AI Ultra). Log in once by running `agy`. Known issue: `agy -p` can hang when run from scripts, so relay caps each call at ~6 minutes."
   },
   "cli": {
     "type": "cli",
     "bin": "",
-    "args": ["{prompt}"],
+    "args": [
+      "{prompt}"
+    ],
     "output": "stdout",
     "data": "unverified",
     "cost": "subscription",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "Any agent CLI. Placeholders: {prompt} {model} {out} plus mode_vars; {model_args} and {mode_args} splice lists."
   },
   "ollama-local": {
@@ -64,7 +185,11 @@
     "model": "",
     "data": "local",
     "cost": "free",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "Local model via Ollama. Never leaves your machine. Pick a model you have pulled."
   },
   "ollama-cloud": {
@@ -74,8 +199,27 @@
     "model": "deepseek-v4-flash:cloud",
     "data": "unverified",
     "cost": "free",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "Ollama Cloud through your local Ollama daemon (run `ollama signin`). Free tier is light usage."
+  },
+  "ollama-api": {
+    "type": "api",
+    "base_url": "https://ollama.com/v1",
+    "auth": "bearer",
+    "key_env": "OLLAMA_API_KEY",
+    "model": "gpt-oss:120b",
+    "data": "unverified",
+    "cost": "free",
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
+    "note": "Ollama Cloud called directly with an API key (ollama.com/settings/keys); no app needed. Model names have no ':cloud' suffix: see https://ollama.com/api/tags"
   },
   "deepseek": {
     "type": "api",
@@ -85,7 +229,11 @@
     "model": "deepseek-chat",
     "data": "may-train",
     "cost": "cheap",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "DeepSeek API. Very cheap; data is processed by DeepSeek in China and may be used to improve services. Public mode only by default."
   },
   "openrouter": {
@@ -96,7 +244,11 @@
     "model": "",
     "data": "may-train",
     "cost": "free",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "OpenRouter. Use a ':free' model for zero cost (rate-limited; free providers may log prompts)."
   },
   "openai": {
@@ -107,7 +259,11 @@
     "model": "",
     "data": "unverified",
     "cost": "paid",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "OpenAI API (pay per token)."
   },
   "azure-openai": {
@@ -118,7 +274,11 @@
     "model": "",
     "data": "unverified",
     "cost": "paid",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "Azure OpenAI v1 endpoint: https://<resource>.openai.azure.com/openai/v1 ; model = your deployment name."
   },
   "openai-compatible": {
@@ -129,7 +289,11 @@
     "model": "",
     "data": "unverified",
     "cost": "paid",
-    "kinds": ["read", "write", "edit"],
+    "kinds": [
+      "read",
+      "write",
+      "edit"
+    ],
     "note": "Any OpenAI-compatible endpoint (vLLM, LM Studio, LiteLLM, a company gateway)."
   }
 }

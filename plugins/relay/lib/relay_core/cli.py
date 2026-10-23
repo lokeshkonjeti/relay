@@ -13,10 +13,10 @@ from .config import (COST_RANK, DATA_CLASSES, MODES, TASK_KINDS, Config, RelayEr
                      global_file, list_packs, load_json, load_pack, presets, project_file, save_json)
 
 ROLE_DEFAULTS = {
-    "reader": ["ollama-cloud", "ollama-local", "deepseek", "codex"],
-    "cheap": ["deepseek", "ollama-cloud", "ollama-local", "openrouter", "codex"],
-    "agent": ["codex", "gemini"],
-    "verifier": ["codex", "gemini"],
+    "reader": ["ollama-cloud", "ollama-api", "ollama-local", "deepseek", "codex"],
+    "cheap": ["deepseek", "ollama-cloud", "ollama-api", "ollama-local", "openrouter", "codex"],
+    "agent": ["codex", "gemini", "antigravity"],
+    "verifier": ["codex", "gemini", "antigravity"],
 }
 
 
@@ -309,9 +309,13 @@ def _ollama_models(host="http://localhost:11434"):
 def cmd_init(a, cfg):
     _require_unlocked(cfg, "init")
     pre = presets()
+    if a.fresh and global_file().exists():
+        backup = global_file().with_name(f"config.backup-{time.strftime('%Y%m%d-%H%M%S')}.json")
+        global_file().rename(backup)
+        print(f"started fresh; previous config saved as {backup}")
     data = _global()
     conns = data.setdefault("connections", {})
-    added = []
+    added, missing = [], []
 
     def add(name, preset, **over):
         if name in conns:
@@ -322,16 +326,23 @@ def cmd_init(a, cfg):
         conns[name] = c
         added.append(f"{name} (data={c['data']})")
 
-    if shutil.which("codex"):
-        add("codex", "codex")
-    if shutil.which("gemini"):
-        add("gemini", "gemini")
+    for preset in ("codex", "gemini", "antigravity", "claude"):
+        b = pre[preset]["bin"]
+        path = backends.find_bin(b)
+        if preset == "claude":
+            continue  # a second Claude account is opt-in: relay connect add claude --name ... --env CLAUDE_CONFIG_DIR=...
+        if path:
+            add(preset, preset, bin=path)
+        else:
+            missing.append(b)
     models = _ollama_models()
     if models is not None:
         add("ollama-cloud", "ollama-cloud")
         local = [m for m in models if m and not m.endswith(("cloud",))]
         if local:
             add("ollama-local", "ollama-local", model=local[0])
+    if os.environ.get("OLLAMA_API_KEY"):
+        add("ollama-api", "ollama-api")
     if os.environ.get("DEEPSEEK_API_KEY"):
         add("deepseek", "deepseek")
     if os.environ.get("OPENROUTER_API_KEY"):
@@ -349,6 +360,10 @@ def cmd_init(a, cfg):
     save_json(global_file(), data)
     print(f"relay initialised in {global_file()} (mode={data['mode']}, packs={','.join(packs) or 'none'})")
     print("added: " + (", ".join(added) if added else "nothing new detected"))
+    if missing:
+        print(f"not found: {', '.join(missing)} (see README 'Install and log in'; restart Claude Code after installing)")
+    if models is None:
+        print("ollama app not running (fine if you use OLLAMA_API_KEY instead)")
     if not os.environ.get("DEEPSEEK_API_KEY") and "deepseek" not in conns:
         print("tip: export DEEPSEEK_API_KEY=... then `relay connect add deepseek` (cheap public-mode default)")
     unverified = [n for n, c in conns.items() if c.get("data") == "unverified"]
@@ -520,6 +535,7 @@ def build_parser():
     s = sub.add_parser("init", help="detect installed CLIs/keys and create a config")
     s.add_argument("--mode", choices=MODES)
     s.add_argument("--pack", default="fullstack")
+    s.add_argument("--fresh", action="store_true", help="back up the current config and start over")
     s.set_defaults(fn=cmd_init)
 
     s = sub.add_parser("doctor", help="check connections and routes")

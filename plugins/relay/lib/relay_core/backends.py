@@ -15,6 +15,33 @@ def _expand(v):
     return os.path.expandvars(os.path.expanduser(str(v)))
 
 
+EXTRA_BIN_DIRS = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "~/.npm-global/bin",
+                  "~/.bun/bin", "~/.volta/bin", "~/.cargo/bin", "~/bin"]
+
+
+def find_bin(b):
+    """shutil.which, then common install dirs that a GUI-launched app's PATH often misses."""
+    if not b:
+        return None
+    b = _expand(b)
+    found = shutil.which(b)
+    if found or os.sep in b:
+        return found
+    dirs = [os.path.expanduser(d) for d in EXTRA_BIN_DIRS]
+    nvm = Path(os.path.expanduser("~/.nvm/versions/node"))
+    if nvm.is_dir():
+        dirs += [str(v / "bin") for v in sorted(nvm.iterdir(), reverse=True)]
+    for d in dirs:
+        cand = Path(d) / b
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return None
+
+
+def timeout_for(conn, settings):
+    return int(conn.get("timeout_sec") or settings["timeout_sec"])
+
+
 def conn_env(conn):
     env = dict(os.environ)
     for k, v in (conn.get("env") or {}).items():
@@ -29,8 +56,11 @@ def availability(name, conn):
         b = conn.get("bin")
         if not b:
             return False, "no bin set"
-        path = shutil.which(_expand(b))
-        return (True, path) if path else (False, f"`{b}` not on PATH")
+        path = find_bin(b)
+        if path:
+            return True, path
+        return False, (f"`{b}` not found. If it is installed, restart Claude Code (it keeps the PATH "
+                       f"from when it started) or set the full path: relay connect set {name} bin=$(which {b})")
     base = conn.get("base_url")
     if not base:
         return False, "no base_url set"
@@ -68,7 +98,7 @@ def call_api(name, conn, messages, settings, model=None):
     req = urllib.request.Request(base + "/chat/completions", data=json.dumps(body).encode(),
                                  headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=settings["timeout_sec"]) as r:
+        with urllib.request.urlopen(req, timeout=timeout_for(conn, settings)) as r:
             data = json.loads(r.read())
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors="replace")[:200].replace("\n", " ")
@@ -107,16 +137,19 @@ def build_cli_cmd(conn, kind, prompt, out_path, model=None):
 
 
 def call_cli(name, conn, kind, prompt, settings, model=None, cwd=None):
-    if not conn.get("bin") or not shutil.which(_expand(conn["bin"])):
-        raise RelayError(f"{name}: `{conn.get('bin')}` not on PATH")
+    exe = find_bin(conn.get("bin"))
+    if not exe:
+        raise RelayError(f"{name}: `{conn.get('bin')}` not found")
+    tmo = timeout_for(conn, settings)
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "last.txt"
         cmd = build_cli_cmd(conn, kind, prompt, out, model)
+        cmd[0] = exe
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["timeout_sec"],
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=tmo,
                                stdin=subprocess.DEVNULL, env=conn_env(conn), cwd=cwd)
         except subprocess.TimeoutExpired:
-            raise RelayError(f"{name}: timed out after {settings['timeout_sec']}s")
+            raise RelayError(f"{name}: timed out after {tmo}s")
         if conn.get("output") == "file":
             text = out.read_text() if out.exists() else ""
         else:
