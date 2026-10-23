@@ -34,9 +34,20 @@ small-fix      -> codex-work             docs         -> ollama-local
    /plugin install relay@relay-marketplace
    /relay:setup
    ```
-   `/relay:setup` detects your CLIs and keys, asks which mode and accounts you want, probes each
-   connection, and prints your routing table. To redo it later: `/relay:setup fresh` (your old
-   config is backed up).
+   That's it. `/relay:setup` runs **`relay up`**, which in one step:
+   - finds your installed CLIs and API keys and connects them
+   - sends each account a one-word test prompt (in parallel) and switches off any that fail, with
+     the reason shown
+   - adds a short delegation rule to the project's `CLAUDE.md`, so Claude delegates without being
+     asked
+   - prints which tasks go where
+
+   Options: `/relay:setup private` for client or company repos, `/relay:setup network=local` so
+   Codex can run tests against your local database, `/relay:setup fresh` to start over (your old
+   config is backed up). The same flags work in a terminal: `relay up --private --network local`.
+
+   Rerun it any time you install, log in to or fix an account. It re-tests everything, turns fixed
+   accounts back on, and never duplicates anything.
 
 Requires Python 3.9+ (preinstalled on macOS and most Linux).
 
@@ -77,7 +88,7 @@ Things that trip people up:
   e.g. `CODEX_HOME=~/.codex-work codex login`, then
   `relay connect add codex --name codex-work --env CODEX_HOME=~/.codex-work`.
 
-Check everything with `relay doctor --probe`, which sends a one-word prompt to each connection.
+After installing or logging in to anything, run `relay up` (or `/relay:setup`) again.
 
 ### Make Claude delegate without being asked
 
@@ -233,6 +244,7 @@ Admins can drop a policy file at `/etc/relay/policy.json`,
 | `relay task set|rm`, `relay role list|set`, `relay pack list|add|rm` | customize |
 | `relay connect presets|list|add|set|rm` | accounts and models |
 | `relay mode [public|private] [--project]` | modes |
+| `relay up [--private] [--network local] [--fresh]` | one-step setup and re-test |
 | `relay doctor [--probe]` / `relay stats` / `relay audit` / `relay policy` | check and report |
 
 In Claude Code: `/relay:setup`, `/relay:config <change>`, `/relay:stats`, `/relay:handoff`.

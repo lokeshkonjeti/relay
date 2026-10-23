@@ -100,6 +100,8 @@ def usable(cfg, name, kind):
         return False, why
     if kind not in conn.get("kinds", ["read", "write", "edit"]):
         return False, f"not enabled for {kind}"
+    if conn.get("disabled"):
+        return False, "turned off by `relay up` (failed its test); rerun `relay up` after fixing"
     ok, why = backends.availability(name, conn)
     return ok, ("" if ok else why)
 

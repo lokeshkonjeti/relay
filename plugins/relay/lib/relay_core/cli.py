@@ -10,7 +10,8 @@ from pathlib import Path
 
 from . import __version__, backends, engine
 from .config import (COST_RANK, DATA_CLASSES, MODES, TASK_KINDS, Config, RelayError, audit_file,
-                     global_file, list_packs, load_json, load_pack, presets, project_file, save_json)
+                     global_file, list_packs, load_json, load_pack, presets, project_file,
+                     project_root, save_json)
 
 ROLE_DEFAULTS = {
     "reader": ["ollama-cloud", "ollama-api", "ollama-local", "deepseek", "codex"],
@@ -171,6 +172,8 @@ def cmd_connect(a, cfg):
             ok, why = backends.availability(n, c)
             allowed, reason = cfg.connection_allowed(n)
             state = "ready" if ok else f"unavailable: {why}"
+            if c.get("disabled"):
+                state = f"off ({c.get('disabled_reason', '')[:80]}); `relay up` re-tests"
             pol = "" if allowed else f"  [{reason}]"
             model = f" model={c['model']}" if c.get("model") else ""
             acct = f" env={','.join(c.get('env', {}))}" if c.get("env") else ""
@@ -310,14 +313,9 @@ def _ollama_models(host="http://localhost:11434"):
         return None
 
 
-def cmd_init(a, cfg):
-    _require_unlocked(cfg, "init")
+def _detect(data):
+    """Add any installed CLI or set API key that isn't connected yet. Returns (added, missing, ollama_models)."""
     pre = presets()
-    if a.fresh and global_file().exists():
-        backup = global_file().with_name(f"config.backup-{time.strftime('%Y%m%d-%H%M%S')}.json")
-        global_file().rename(backup)
-        print(f"started fresh; previous config saved as {backup}")
-    data = _global()
     conns = data.setdefault("connections", {})
     added, missing = [], []
 
@@ -328,13 +326,11 @@ def cmd_init(a, cfg):
         c["preset"] = preset
         c.update(over)
         conns[name] = c
-        added.append(f"{name} (data={c['data']})")
+        added.append(name)
 
-    for preset in ("codex", "gemini", "antigravity", "claude"):
+    for preset in ("codex", "gemini", "antigravity"):
         b = pre[preset]["bin"]
         path = backends.find_bin(b)
-        if preset == "claude":
-            continue  # a second Claude account is opt-in: relay connect add claude --name ... --env CLAUDE_CONFIG_DIR=...
         if path:
             add(preset, preset, bin=path)
         else:
@@ -342,18 +338,37 @@ def cmd_init(a, cfg):
     models = _ollama_models()
     if models is not None:
         add("ollama-cloud", "ollama-cloud")
-        local = [m for m in models if m and not m.endswith(("cloud",))]
+        local = [m for m in models if m and not m.endswith("cloud")]
         if local:
             add("ollama-local", "ollama-local", model=local[0])
-    if os.environ.get("OLLAMA_API_KEY"):
-        add("ollama-api", "ollama-api")
-    if os.environ.get("DEEPSEEK_API_KEY"):
-        add("deepseek", "deepseek")
-    if os.environ.get("OPENROUTER_API_KEY"):
-        add("openrouter", "openrouter")
+    for env, preset in (("OLLAMA_API_KEY", "ollama-api"), ("DEEPSEEK_API_KEY", "deepseek"),
+                        ("OPENROUTER_API_KEY", "openrouter")):
+        if os.environ.get(env):
+            add(preset, preset)
     roles = data.setdefault("roles", {})
     for r, chain in ROLE_DEFAULTS.items():
         roles.setdefault(r, chain)
+    return added, missing, models
+
+
+def _backup_global():
+    if global_file().exists():
+        backup = global_file().with_name(f"config.backup-{time.strftime('%Y%m%d-%H%M%S')}.json")
+        global_file().rename(backup)
+        return backup
+    return None
+
+
+def cmd_init(a, cfg):
+    _require_unlocked(cfg, "init")
+    if a.fresh:
+        backup = _backup_global()
+        if backup:
+            print(f"started fresh; previous config saved as {backup}")
+    data = _global()
+    conns = data.setdefault("connections", {})
+    added, missing, models = _detect(data)
+    added = [f"{n} (data={conns[n]['data']})" for n in added]
     if a.mode:
         data["mode"] = a.mode
     data.setdefault("mode", "public")
@@ -377,6 +392,142 @@ def cmd_init(a, cfg):
     print("next: `relay doctor`, then `relay tasks`")
 
 
+# ---------------------------------------------------------------- probe / up
+
+PROBE_TIMEOUT = 120
+
+
+def probe(name, conn, settings):
+    """Send a one-word prompt. Returns (ok, detail)."""
+    ok, why = backends.availability(name, conn)
+    if not ok:
+        return False, why
+    c = dict(conn, timeout_sec=min(int(conn.get("timeout_sec") or settings["timeout_sec"]), PROBE_TIMEOUT))
+    t0 = time.time()
+    try:
+        if c["type"] == "cli":
+            backends.call_cli(name, c, "read", "Reply with the single word OK. Do not use tools.", settings)
+        else:
+            backends.call_api(name, c, [{"role": "user", "content": "Reply with the single word OK."}],
+                              dict(settings, max_tokens=256))
+        return True, f"{time.time() - t0:.1f}s"
+    except RelayError as e:
+        return False, str(e).split(": ", 1)[-1]
+
+
+CLAUDE_MD_BLOCK = """## Delegation (relay)
+Before writing tests, docs, diagrams, fixtures or boilerplate, making UI tweaks or small
+fixes, or reading 3+ large files to answer a question: run `relay tasks --brief` and
+delegate with `relay run <task> ...`. Keep architecture, core logic, data model, auth and
+debugging yourself. Review what relay returns before relying on it.
+"""
+
+
+def _add_claude_md():
+    root = project_root()
+    if not (root / ".git").exists():
+        return "skipped (not inside a git repo)"
+    f = root / "CLAUDE.md"
+    text = f.read_text() if f.exists() else ""
+    if "## Delegation (relay)" in text:
+        return f"already in {f}"
+    sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+    f.write_text(text + sep + ("\n" if text else "") + CLAUDE_MD_BLOCK)
+    return f"added delegation rule to {f}"
+
+
+def cmd_up(a, cfg):
+    """One command: detect, connect, probe, enable/disable, project setup, summary."""
+    _require_unlocked(cfg, "relay up")
+    if a.fresh:
+        backup = _backup_global()
+        if backup:
+            print(f"fresh start; old config saved as {backup.name}")
+    data = _global()
+    conns = data.setdefault("connections", {})
+    added, missing, _ = _detect(data)
+    data.setdefault("mode", "public")
+    packs = data.setdefault("packs", [])
+    if a.pack and a.pack not in packs:
+        load_pack(a.pack)
+        packs.append(a.pack)
+    if a.network:
+        for n, c in conns.items():
+            if backends._preset_of(c) in backends.NETWORK_ARGS:
+                c["network"] = a.network
+    save_json(global_file(), data)
+
+    cfg = Config()  # reload with everything above applied
+    results = {}
+    if a.no_probe:
+        results = {n: backends.availability(n, c) for n, c in cfg.connections.items()}
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        print(f"testing {len(cfg.connections)} connection(s)...", flush=True)
+        with ThreadPoolExecutor(max_workers=max(1, len(cfg.connections))) as pool:
+            futs = {n: pool.submit(probe, n, c, cfg.settings) for n, c in cfg.connections.items()}
+            results = {n: f.result() for n, f in futs.items()}
+
+    data = _global()
+    for n, (good, detail) in results.items():
+        c = data.get("connections", {}).get(n)
+        if c is None:  # defined by enterprise policy; nothing to toggle here
+            continue
+        if good:
+            c.pop("disabled", None)
+            c.pop("disabled_reason", None)
+        else:
+            c["disabled"] = True
+            c["disabled_reason"] = detail[:300]
+    save_json(global_file(), data)
+
+    proj_notes = []
+    if a.private or a.public:
+        if cfg.policy.get("force_mode"):
+            proj_notes.append(f"mode is forced to {cfg.policy['force_mode']} by policy")
+        else:
+            pdata = load_json(project_file())
+            pdata["mode"] = "private" if a.private else "public"
+            save_json(project_file(), pdata)
+            proj_notes.append(f"this repo set to {pdata['mode']} mode ({project_file().name})")
+    if not a.no_claude_md:
+        proj_notes.append(_add_claude_md())
+
+    cfg = Config()
+    print()
+    print(f"relay {__version__} · mode {cfg.mode} ({cfg.mode_source()}) · packs {', '.join(packs) or 'none'}")
+    for n in sorted(results):
+        good, detail = results[n]
+        c = cfg.connections.get(n, {})
+        extra = f", network={c['network']}" if c.get("network", "off") != "off" else ""
+        if good:
+            new = "  (new)" if n in added else ""
+            print(f"  ✓ {n:<14} ready ({detail}, data={c.get('data')}{extra}){new}")
+        else:
+            print(f"  ✗ {n:<14} off: {detail[:140]}")
+    if missing:
+        print(f"  · not installed: {', '.join(missing)}")
+    for note in proj_notes:
+        print(f"  · {note}")
+    delegated, kept, stuck = [], [], []
+    for name in sorted(cfg.tasks):
+        cands, _ = engine.resolve(cfg, name)
+        route = cfg.tasks[name].get("route", [])
+        if cands[0][0] != engine.SELF:
+            delegated.append(f"{name}→{cands[0][0]}")
+        elif route and route[0] == engine.SELF:
+            kept.append(name)
+        else:
+            stuck.append(name)
+    print(f"\ndelegated: {', '.join(delegated) or 'nothing (no usable accounts)'}")
+    print(f"kept by Claude: {', '.join(kept)}")
+    if stuck:
+        print(f"no account available, Claude does it: {', '.join(stuck)}")
+    if any(not g for g, _ in results.values()):
+        print("\nfix an account, then run `relay up` again to re-test it.")
+    print("ready: start Claude Code in your project and work as usual.")
+
+
 # ---------------------------------------------------------------- doctor / stats / audit
 
 def cmd_doctor(a, cfg):
@@ -391,17 +542,11 @@ def cmd_doctor(a, cfg):
         line = f"{'OK ' if ok else 'XX '} {n:<16} {why}"
         if not allowed:
             line += f"  [{reason}]"
+        if c.get("disabled"):
+            line += f"  [disabled: {c.get('disabled_reason', '')[:120]}]"
         if ok and a.probe:
-            t0 = time.time()
-            try:
-                if c["type"] == "cli":
-                    backends.call_cli(n, c, "read", "Reply with the single word OK. Do not use tools.", cfg.settings)
-                else:
-                    backends.call_api(n, c, [{"role": "user", "content": "Reply with the single word OK."}],
-                                      dict(cfg.settings, max_tokens=256))
-                line += f"  probe ok {time.time() - t0:.1f}s"
-            except RelayError as e:
-                line += f"  probe FAILED: {e}"
+            good, detail = probe(n, c, cfg.settings)
+            line += f"  probe ok {detail}" if good else f"  probe FAILED: {detail}"
         print(line)
     print("routes:")
     for name in sorted(cfg.tasks):
@@ -545,6 +690,16 @@ def build_parser():
     s.add_argument("--pack", default="fullstack")
     s.add_argument("--fresh", action="store_true", help="back up the current config and start over")
     s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("up", help="one-step setup: detect, connect, test every account, set up this repo")
+    s.add_argument("--private", action="store_true", help="this repo: only local/no-train accounts")
+    s.add_argument("--public", action="store_true", help="this repo: any account, never stop")
+    s.add_argument("--network", choices=backends.NETWORK_MODES, help="sandbox network for Codex write/edit runs")
+    s.add_argument("--pack", default="fullstack")
+    s.add_argument("--fresh", action="store_true", help="back up the current config and start over")
+    s.add_argument("--no-probe", action="store_true", help="skip test prompts (only check installs/keys)")
+    s.add_argument("--no-claude-md", action="store_true", help="don't add the delegation rule to CLAUDE.md")
+    s.set_defaults(fn=cmd_up)
 
     s = sub.add_parser("doctor", help="check connections and routes")
     s.add_argument("--probe", action="store_true", help="send a tiny prompt to each connection")

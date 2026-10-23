@@ -435,6 +435,50 @@ class RelayTest(unittest.TestCase):
         saved = (row["chars_in"] + row["chars_gen"] - row["chars_back"]) // 4 + (4000 - 400) // 4
         self.assertIn(f"~{saved:,} tokens", out)
 
+    def test_up_one_command(self):
+        self.tool("codex", "gemini", "agy")
+        url = f"http://127.0.0.1:{self.port}/v1"
+        out, _ = self.relay("up", "--network", "local", FAKE_FAIL="gemini")
+        self.assertIn("✓ codex", out)
+        self.assertIn("network=local", out)
+        self.assertIn("✓ antigravity", out)
+        self.assertIn("deepseek", out)  # key in env -> added; mock not wired, so its probe fails
+        self.assertIn("✗ gemini", out)
+        self.assertIn("usage limit reached", out)
+        self.assertIn("added delegation rule to", out)
+        self.assertIn("kept by Claude: architecture", out)
+        self.assertIn("unit-tests→codex", out)
+        cfg = json.loads((self.home / "config.json").read_text())
+        self.assertTrue(cfg["connections"]["gemini"]["disabled"])
+        self.assertEqual(cfg["connections"]["codex"]["network"], "local")
+        self.assertNotIn("network", cfg["connections"]["antigravity"])
+        claude_md = (self.repo / "CLAUDE.md").read_text()
+        self.assertEqual(claude_md.count("## Delegation (relay)"), 1)
+        # disabled accounts are skipped by routing
+        out, _ = self.relay("run", "review", "q", "--paths", "src", "--via", "gemini")
+        self.assertIn("SELF]", out)
+        self.assertIn("turned off by `relay up`", out)
+        # second run: gemini fixed, deepseek pointed at the mock; nothing duplicated
+        self.relay("connect", "set", "deepseek", f"base_url={url}")
+        out, _ = self.relay("up", "--private")
+        self.assertIn("✓ gemini", out)
+        self.assertIn("✓ deepseek", out)
+        self.assertIn("this repo set to private mode", out)
+        self.assertIn("already in", out)
+        self.assertEqual((self.repo / "CLAUDE.md").read_text().count("## Delegation (relay)"), 1)
+        cfg = json.loads((self.home / "config.json").read_text())
+        self.assertNotIn("disabled", cfg["connections"]["gemini"])
+        self.assertIn("mode private", out)
+
+    def test_up_keeps_existing_claude_md(self):
+        self.tool("codex")
+        (self.repo / "CLAUDE.md").write_text("# SchedMax\nUse pnpm.")
+        self.relay("up", "--no-probe")
+        text = (self.repo / "CLAUDE.md").read_text()
+        self.assertTrue(text.startswith("# SchedMax\nUse pnpm.\n"))
+        self.assertIn("## Delegation (relay)", text)
+        self.relay("up", "--no-probe", "--no-claude-md")
+
     def test_doctor_runs(self):
         self.base_config()
         out, _ = self.relay("doctor", "--probe")
