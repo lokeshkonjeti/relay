@@ -1,0 +1,129 @@
+{
+  "name": "fullstack",
+  "description": "Full-stack apps: Claude designs and builds the core, delegates tests, diagrams, docs, UI tweaks and small fixes.",
+  "tasks": {
+    "architecture": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "system/API design, key trade-offs"
+    },
+    "db-design": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "schema, indexes, migration strategy"
+    },
+    "core-logic": {
+      "kind": "edit",
+      "route": [
+        "self"
+      ],
+      "desc": "core backend/domain logic"
+    },
+    "debug": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "bugs whose cause is not yet known"
+    },
+    "security": {
+      "kind": "edit",
+      "route": [
+        "self"
+      ],
+      "desc": "auth, secrets, permissions, payments"
+    },
+    "read-codebase": {
+      "kind": "read",
+      "route": [
+        "@reader"
+      ],
+      "desc": "questions spanning many or large files"
+    },
+    "review": {
+      "kind": "read",
+      "route": [
+        "@verifier"
+      ],
+      "desc": "second-opinion review of a diff or design"
+    },
+    "er-diagram": {
+      "kind": "write",
+      "route": [
+        "@cheap"
+      ],
+      "desc": "Mermaid ER diagram from models/migrations"
+    },
+    "diagram": {
+      "kind": "write",
+      "route": [
+        "@cheap"
+      ],
+      "desc": "Mermaid flow/sequence/architecture diagram"
+    },
+    "docs": {
+      "kind": "write",
+      "route": [
+        "@cheap"
+      ],
+      "desc": "README, API docs, docstrings from code"
+    },
+    "fixtures": {
+      "kind": "write",
+      "route": [
+        "@cheap",
+        "@agent"
+      ],
+      "desc": "mocks, fixtures, seed data, DTOs"
+    },
+    "unit-tests": {
+      "kind": "write",
+      "route": [
+        "@agent",
+        "@cheap"
+      ],
+      "desc": "unit tests in the existing test style"
+    },
+    "integration-tests": {
+      "kind": "write",
+      "route": [
+        "@agent"
+      ],
+      "desc": "integration tests: DB, HTTP, cloud emulators"
+    },
+    "ui-first-pass": {
+      "kind": "write",
+      "route": [
+        "@agent"
+      ],
+      "desc": "first version of a UI page/component"
+    },
+    "ui-tweak": {
+      "kind": "edit",
+      "route": [
+        "@cheap",
+        "@agent"
+      ],
+      "desc": "colors, spacing, copy, small button/layout fixes"
+    },
+    "small-fix": {
+      "kind": "edit",
+      "route": [
+        "@agent",
+        "@cheap"
+      ],
+      "desc": "small, well-specified fix in a known place"
+    },
+    "refactor-mechanical": {
+      "kind": "edit",
+      "route": [
+        "@agent"
+      ],
+      "desc": "renames, moves, signature updates across files"
+    }
+  }
+}

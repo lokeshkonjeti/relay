@@ -1,0 +1,64 @@
+{
+  "name": "backend-azure",
+  "description": "APIs on Azure: Claude owns contracts, data model and cloud design; delegates IaC scaffolding, API tests and docs.",
+  "tasks": {
+    "api-contract": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "endpoints, payloads, versioning"
+    },
+    "data-model": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "database schema and data access design"
+    },
+    "azure-design": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "Azure resources, identity, networking, cost"
+    },
+    "iac-scaffold": {
+      "kind": "write",
+      "route": [
+        "@agent"
+      ],
+      "desc": "Bicep/Terraform module from a decided design"
+    },
+    "api-tests": {
+      "kind": "write",
+      "route": [
+        "@agent",
+        "@cheap"
+      ],
+      "desc": "HTTP/API tests for existing endpoints"
+    },
+    "openapi-docs": {
+      "kind": "write",
+      "route": [
+        "@cheap"
+      ],
+      "desc": "OpenAPI/README docs from controllers"
+    },
+    "config-wiring": {
+      "kind": "edit",
+      "route": [
+        "@agent",
+        "@cheap"
+      ],
+      "desc": "app settings, DI registration, env wiring"
+    },
+    "log-triage": {
+      "kind": "read",
+      "route": [
+        "@reader"
+      ],
+      "desc": "summarize large logs or traces"
+    }
+  }
+}

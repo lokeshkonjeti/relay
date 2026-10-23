@@ -1,0 +1,57 @@
+{
+  "name": "frontend",
+  "description": "UI-heavy work: Claude owns UX structure and state; delegates components, stories, styling and a11y passes.",
+  "tasks": {
+    "ux-structure": {
+      "kind": "read",
+      "route": [
+        "self"
+      ],
+      "desc": "page structure, state management, data flow"
+    },
+    "ui-first-pass": {
+      "kind": "write",
+      "route": [
+        "@agent"
+      ],
+      "desc": "first version of a UI page/component"
+    },
+    "ui-tweak": {
+      "kind": "edit",
+      "route": [
+        "@cheap",
+        "@agent"
+      ],
+      "desc": "colors, spacing, copy, small button/layout fixes"
+    },
+    "component-tests": {
+      "kind": "write",
+      "route": [
+        "@agent",
+        "@cheap"
+      ],
+      "desc": "component tests (Testing Library/Playwright)"
+    },
+    "stories": {
+      "kind": "write",
+      "route": [
+        "@cheap"
+      ],
+      "desc": "Storybook stories for a component"
+    },
+    "a11y-check": {
+      "kind": "read",
+      "route": [
+        "@reader"
+      ],
+      "desc": "accessibility issues in given components"
+    },
+    "css-cleanup": {
+      "kind": "edit",
+      "route": [
+        "@agent"
+      ],
+      "desc": "dedupe styles, tokens, unused CSS across files"
+    }
+  }
+}

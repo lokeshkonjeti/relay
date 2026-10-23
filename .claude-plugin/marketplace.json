@@ -1,0 +1,15 @@
+{
+  "name": "relay-marketplace",
+  "description": "Relay: route Claude Code's grunt work to the other AI accounts you already pay for.",
+  "owner": {
+    "name": "Buddy"
+  },
+  "plugins": [
+    {
+      "name": "relay",
+      "source": "./plugins/relay",
+      "description": "Per-task routing to your Codex, Gemini, Claude, Azure OpenAI, DeepSeek and Ollama accounts, with private/public modes.",
+      "version": "0.2.0"
+    }
+  ]
+}
