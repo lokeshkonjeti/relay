@@ -79,6 +79,22 @@ Things that trip people up:
 
 Check everything with `relay doctor --probe`, which sends a one-word prompt to each connection.
 
+### Make Claude delegate without being asked
+
+Skills only nudge Claude, so out of the box it delegates when you ask ("use relay to write tests
+for X"). To make it routine in a project, let `/relay:setup` add this to the project's `CLAUDE.md`
+(about 70 tokens per session), or paste it yourself:
+
+```markdown
+## Delegation (relay)
+Before writing tests, docs, diagrams, fixtures or boilerplate, making UI tweaks or small
+fixes, or reading 3+ large files to answer a question: run `relay tasks --brief` and
+delegate with `relay run <task> ...`. Keep architecture, core logic, data model, auth and
+debugging yourself. Review what relay returns before relying on it.
+```
+
+Watch delegations as they happen: `tail -F ~/.config/relay/audit.jsonl`.
+
 ## How it works
 
 ```

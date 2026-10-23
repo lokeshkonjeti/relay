@@ -46,6 +46,11 @@ class MockAPI(BaseHTTPRequestHandler):
         last = req["messages"][-1]["content"]
         if how == "truncate":
             text = "```python\nx = 1\n```"
+        elif how == "nested_md":
+            text = ("Here is the file:\n```markdown\n# Design flow\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n"
+                    "## Account flow\n\n```mermaid\nsequenceDiagram\n  A->>B: invite\n```\n```\nDone.")
+        elif how == "cutoff_md":
+            text = "# Design flow\n\n```mermaid\ngraph TD\n  A-->B"
         elif "Write the file" in last:
             text = "```python\ndef test_api():\n    assert 2 + 2 == 4\n```"
         elif last.startswith("Task type") and "Change:" in last or "Change:" in last:
@@ -363,6 +368,25 @@ class RelayTest(unittest.TestCase):
         self.relay("connect", "add", "gemini")
         out, _ = self.relay("doctor")
         self.assertIn("restart Claude Code", out)
+
+    def test_markdown_with_mermaid_is_not_cut_off(self):
+        self.base_config()
+        BEHAVIOUR["deepseek-chat"] = "nested_md"
+        out, _ = self.relay("run", "diagram", "design flow", "--paths", "src", "--target", "docs/design-flow.md")
+        self.assertIn("diagram → deepseek]", out)
+        doc = (self.repo / "docs/design-flow.md").read_text()
+        self.assertTrue(doc.startswith("# Design flow"))
+        self.assertIn("## Account flow", doc)
+        self.assertEqual(doc.count("```mermaid"), 2)
+        self.assertNotIn("Here is the file", doc)
+        self.assertIn("four backticks", json.dumps(REQUESTS[-1]["messages"]))
+
+    def test_cut_off_output_falls_back(self):
+        self.base_config()
+        BEHAVIOUR["deepseek-chat"] = "cutoff_md"
+        out, _ = self.relay("run", "diagram", "design flow", "--paths", "src", "--target", "docs/flow.md")
+        self.assertIn("unclosed code block", out)
+        self.assertIn("diagram → ollama-cloud]", out)
 
     def test_doctor_runs(self):
         self.base_config()

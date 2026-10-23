@@ -145,9 +145,48 @@ def pack_corpus(paths, settings):
     return "\n\n".join(docs), total, used, skipped
 
 
-def strip_fence(text):
-    m = re.search(r"```[\w.+-]*\n(.*?)```", text, re.S)
-    return m.group(1) if m else text
+FENCE = re.compile(r"^\s*(```|~~~)")
+MARKDOWN_EXT = {".md", ".mdx", ".markdown"}
+
+
+def strip_fence(text, target=None):
+    """Return the file body from a model reply.
+
+    The reply may wrap the file in an outer fence, and the file itself may contain
+    fences (Markdown with Mermaid/code blocks). So unwrap from the FIRST fence line
+    to the LAST fence line, never to the first closing fence.
+    """
+    lines = text.strip("\n").splitlines()
+    first = next((i for i, l in enumerate(lines) if l.strip()), None)
+    if first is None:
+        return text
+    fences = [i for i, l in enumerate(lines) if FENCE.match(l)]
+    if not fences:
+        return text
+    if FENCE.match(lines[first]):
+        start = first
+    elif target and Path(target).suffix.lower() in MARKDOWN_EXT:
+        # prose before an outer wrapper (```markdown, ```md, ``` or ````), else the reply is the file
+        opener = lines[fences[0]].strip()
+        if opener.startswith("````") or opener.lstrip("`~").strip().lower() in ("", "markdown", "md", "mdx"):
+            start = fences[0]
+        else:
+            return text  # unwrapped Markdown whose own code blocks must stay
+    else:
+        start = fences[0]  # prose before the code block
+    end = fences[-1]
+    if end <= start:
+        return "\n".join(lines[start + 1:]) + "\n"
+    return "\n".join(lines[start + 1:end]) + "\n"
+
+
+def check_body(label, body, target):
+    """Reject output that is obviously broken, so the route falls back instead of writing it."""
+    if not body.strip():
+        raise RelayError(f"{label}: returned an empty file")
+    n = sum(1 for l in body.splitlines() if FENCE.match(l))
+    if n % 2:
+        raise RelayError(f"{label}: returned a file with an unclosed code block (looks cut off); not written")
 
 
 def cap(text, settings):
@@ -201,8 +240,9 @@ SYS_READ = ("You are a precise code analyst. Answer only from the files given. C
             "function names. Be concise: bullets, no preamble. If the files do not contain the "
             "answer, say so.")
 SYS_WRITE = ("You write complete, working source files that follow the conventions of the reference "
-             "files exactly (framework, naming, imports, style). Output ONLY the file content in one "
-             "fenced code block. No explanations.")
+             "files exactly (framework, naming, imports, style). Output ONLY the file content wrapped in "
+             "one outer fence of four backticks (````), so code blocks inside the file stay intact. "
+             "No explanations.")
 SYS_EDIT = ("You edit one source file. Apply exactly the requested change and nothing else. Keep "
             "everything else byte-for-byte identical. Output the COMPLETE updated file in one fenced "
             "code block. No explanations.")
@@ -264,7 +304,8 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                             {"role": "user", "content": _task_line(task) + f"Change: {instruction}"}]
                     sent_files, chars_in = [str(src)], len(old)
                     text, pin, pout = backends.call_api(name, conn, msgs, s, model)
-                    new = strip_fence(text).rstrip("\n") + "\n"
+                    new = strip_fence(text, src).rstrip("\n") + "\n"
+                    check_body(label, new, src)
                     if len(old.splitlines()) > 20 and len(new.splitlines()) < 0.5 * len(old.splitlines()):
                         raise RelayError(f"{label}: returned file looks truncated; not applied")
                     src.write_text(new)
@@ -291,7 +332,8 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                                 {"role": "user", "content": _task_line(task)
                                  + f"Write the file `{target}`.\nSpec: {instruction}"}]
                         text, pin, pout = backends.call_api(name, conn, msgs, s, model)
-                        body = strip_fence(text).rstrip("\n") + "\n"
+                        body = strip_fence(text, target).rstrip("\n") + "\n"
+                        check_body(label, body, target)
                         Path(target).parent.mkdir(parents=True, exist_ok=True)
                         Path(target).write_text(body)
                         out = f"wrote {target} ({len(body.splitlines())} lines). Review before relying on it."
