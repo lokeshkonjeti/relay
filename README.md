@@ -192,8 +192,22 @@ For other CLI flags, `extra_args` adds raw arguments per task kind:
 ```
 tail -F ~/.config/relay/audit.jsonl   # watch delegations live, one line per finished call
 relay audit --days 1                  # what was sent where today: task, account, data class, files
-relay stats --days 7                  # calls per account, fallbacks, and Claude tokens saved
+relay stats --days 7                  # per account: tasks, checks, Claude tokens saved, tokens it used
+relay stats --hours 1                 # just this session
 ```
+
+Example:
+
+```
+account          tasks checks failed   Claude saved   tokens it used (in / cached / out)
+ollama-api           1      0      1         ~37.7k   37.6k / 0 / 1.6k
+codex                2      1      0         ~24.2k   181.0k / 140.0k / 10.0k
+antigravity          1      0      0          ~2.8k   0 / 0 / 0  (1 call(s) not reported)
+```
+
+Token use is reported by API accounts (Ollama, DeepSeek, Azure) and by Codex. Antigravity, Gemini
+and Claude CLIs don't report it, so those show as "not reported". Cached input is the part the
+provider served from its prompt cache, which is usually cheaper or free against your quota.
 
 The saving per call is an estimate: what the delegate read, plus what it produced (the file or
 diff), minus the short reply Claude reads back, divided by 4 to convert characters to tokens.

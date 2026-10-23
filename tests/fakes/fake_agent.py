@@ -32,6 +32,10 @@ if tool in os.environ.get("FAKE_FAIL", "").split(","):
     print("error: usage limit reached (429)", file=sys.stderr)
     sys.exit(1)
 
+if "--json" in args and os.environ.get("FAKE_NO_JSON"):
+    print("error: unexpected argument '--json' found", file=sys.stderr)
+    sys.exit(2)
+
 out_file = None
 if "--output-last-message" in args:
     out_file = args[args.index("--output-last-message") + 1]
@@ -53,6 +57,11 @@ elif m := re.search(r"Relevant files: (.+)\n", prompt):
     reply = f"Edited {m.group(1)}"
 else:
     reply = f"{tool} answer: the port is 5600"
+
+if "--json" in args:  # mimic `codex exec --json`: JSONL events on stdout, two turns
+    print(json.dumps({"type": "thread.started", "thread_id": "t1"}))
+    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 12000, "cached_input_tokens": 9000, "output_tokens": 800}}))
+    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3000, "cached_input_tokens": 1000, "output_tokens": 200}}))
 
 if out_file:
     Path(out_file).write_text(reply)

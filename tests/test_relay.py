@@ -310,7 +310,7 @@ class RelayTest(unittest.TestCase):
         self.assertEqual(rows[-1]["data"], "unverified")
         self.assertTrue(rows[-1]["files"][0].endswith("app.css"))
         out, _ = self.relay("stats")
-        self.assertIn("tokens of reading/writing kept out", out)
+        self.assertIn("Claude tokens kept out of context", out)
         out, _ = self.relay("audit")
         self.assertIn("read-codebase", out)
 
@@ -397,7 +397,7 @@ class RelayTest(unittest.TestCase):
         self.assertIn("sandbox_workspace_write.network_access=true", args)
         self.assertIn("features.network_proxy.enabled=true", args)
         self.assertTrue(any('"localhost" = "allow"' in a for a in args))
-        self.assertEqual(args[args.index("exec") + 1:args.index("exec") + 2], ["--skip-git-repo-check"])
+        self.assertEqual(args[args.index("exec") + 1:args.index("exec") + 3], ["--json", "--skip-git-repo-check"])
         # reads never get network
         self.relay("run", "review", "q", "--paths", "src", "--via", "codex")
         self.assertNotIn("sandbox_workspace_write.network_access=true", self.agent_calls()[-1]["args"])
@@ -433,7 +433,7 @@ class RelayTest(unittest.TestCase):
                                  "chars_in": 4000, "chars_out": 400, "ts": row["ts"]}) + "\n")
         out, _ = self.relay("stats")
         saved = (row["chars_in"] + row["chars_gen"] - row["chars_back"]) // 4 + (4000 - 400) // 4
-        self.assertIn(f"~{saved:,} tokens", out)
+        self.assertIn(f"~{saved:,} Claude tokens kept out of context", out)
 
     def test_up_one_command(self):
         self.tool("codex", "gemini", "agy")
@@ -478,6 +478,36 @@ class RelayTest(unittest.TestCase):
         self.assertTrue(text.startswith("# SchedMax\nUse pnpm.\n"))
         self.assertIn("## Delegation (relay)", text)
         self.relay("up", "--no-probe", "--no-claude-md")
+
+    def test_codex_token_usage_and_stats_breakdown(self):
+        self.base_config()
+        self.relay("run", "unit-tests", "tests", "--paths", "src/gcs.py", "--target", "tests/test_a.py")
+        args = self.agent_calls()[-1]["args"]
+        self.assertEqual(args[:2], ["exec", "--json"], "--json goes right after exec")
+        row = [json.loads(l) for l in (self.home / "audit.jsonl").read_text().splitlines()][-1]
+        self.assertEqual((row["tok_in"], row["tok_cached"], row["tok_out"]), (15000, 10000, 1000))
+        self.relay("run", "read-codebase", "which port?", "--paths", "src", "--verify")
+        out, _ = self.relay("stats", "--hours", "1")
+        self.assertIn("last 1.0h", out)
+        lines = {l.split()[0]: l for l in out.splitlines() if l.startswith(("codex", "ollama-cloud"))}
+        self.assertRegex(lines["codex"], r"codex\s+1\s+1\s+0")           # 1 task, 1 check
+        self.assertIn("30.0k / 20.0k / 2.0k", lines["codex"])           # both runs' usage summed
+        self.assertRegex(lines["ollama-cloud"], r"ollama-cloud\s+1\s+0\s+0")
+        self.assertIn("100 / 0 / 10", lines["ollama-cloud"])
+        self.assertIn("Checks are --verify calls", out)
+
+    def test_codex_without_json_flag_still_works(self):
+        self.base_config()
+        out, _ = self.relay("run", "unit-tests", "tests", "--paths", "src/gcs.py",
+                            "--target", "tests/test_b.py", FAKE_NO_JSON=1)
+        self.assertIn("unit-tests → codex]", out)
+        calls = self.agent_calls()
+        self.assertIn("--json", calls[-2]["args"])
+        self.assertNotIn("--json", calls[-1]["args"])
+        row = [json.loads(l) for l in (self.home / "audit.jsonl").read_text().splitlines()][-1]
+        self.assertEqual(row["tok_in"], 0)
+        out, _ = self.relay("stats")
+        self.assertIn("1 call(s) not reported", out)
 
     def test_doctor_runs(self):
         self.base_config()

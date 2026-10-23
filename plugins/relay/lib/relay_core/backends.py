@@ -170,29 +170,80 @@ def build_cli_cmd(conn, kind, prompt, out_path, model=None):
     return cmd
 
 
+def _codex_usage(stdout):
+    """Sum token usage from `codex exec --json` events. Returns (input, cached_input, output)."""
+    tin = tcached = tout = 0
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{") or "usage" not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "turn.completed":
+            u = ev.get("usage") or {}
+            tin += u.get("input_tokens", 0) or 0
+            tcached += u.get("cached_input_tokens", 0) or 0
+            tout += u.get("output_tokens", 0) or 0
+    return tin, tcached, tout
+
+
+def _wants_json_usage(conn):
+    return (_preset_of(conn) == "codex" and conn.get("output") == "file"
+            and conn.get("usage_json", True))
+
+
+def _with_json_flag(cmd):
+    """Insert --json right after the `exec` subcommand (it is not a global flag)."""
+    if "exec" in cmd[1:]:
+        i = cmd.index("exec", 1)
+        return cmd[:i + 1] + ["--json"] + cmd[i + 1:]
+    return cmd
+
+
 def call_cli(name, conn, kind, prompt, settings, model=None, cwd=None):
+    """Run an agent CLI. Returns (text, input_tokens, output_tokens); tokens are 0 when unknown.
+    Cached input tokens (Codex) are stored in conn-independent form via the `usage` attribute."""
     exe = find_bin(conn.get("bin"))
     if not exe:
         raise RelayError(f"{name}: `{conn.get('bin')}` not found")
     tmo = timeout_for(conn, settings)
+    json_usage = _wants_json_usage(conn)
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "last.txt"
-        cmd = build_cli_cmd(conn, kind, prompt, out, model)
-        cmd[0] = exe
-        try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=tmo,
-                               stdin=subprocess.DEVNULL, env=conn_env(conn), cwd=cwd)
-        except subprocess.TimeoutExpired:
-            raise RelayError(f"{name}: timed out after {tmo}s")
+        base = build_cli_cmd(conn, kind, prompt, out, model)
+        base[0] = exe
+        attempts = [_with_json_flag(base), base] if json_usage else [base]
+        for i, cmd in enumerate(attempts):
+            try:
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=tmo,
+                                   stdin=subprocess.DEVNULL, env=conn_env(conn), cwd=cwd)
+            except subprocess.TimeoutExpired:
+                raise RelayError(f"{name}: timed out after {tmo}s")
+            unknown_flag = ("--json" in (p.stderr or "") and
+                            any(w in (p.stderr or "").lower() for w in ("unexpected", "unrecognized", "unknown")))
+            if p.returncode != 0 and unknown_flag and i == 0 and len(attempts) > 1:
+                json_usage = False
+                continue  # an older CLI without --json: run again plainly
+            break
         if conn.get("output") == "file":
             text = out.read_text() if out.exists() else ""
         else:
             text = p.stdout
     if p.returncode != 0 and not text.strip():
-        tail = " | ".join((p.stderr or p.stdout or "").strip().splitlines()[-3:])
+        tail = " | ".join((p.stderr or "").strip().splitlines()[-3:]) or (p.stdout or "").strip()[-300:]
         low = tail.lower()
         hint = " (quota/limit hit)" if any(w in low for w in ("limit", "quota", "429", "rate")) else ""
         raise RelayError(f"{name}: exit {p.returncode}{hint}: {tail[:300]}")
     if not text.strip():
         raise RelayError(f"{name}: no output")
-    return text, 0, 0
+    tin = tcached = tout = 0
+    if json_usage:
+        tin, tcached, tout = _codex_usage(p.stdout)
+    LAST_USAGE.clear()
+    LAST_USAGE.update(input=tin, cached=tcached, output=tout)
+    return text, tin, tout
+
+
+LAST_USAGE = {}

@@ -554,11 +554,11 @@ def cmd_doctor(a, cfg):
         print(f"  {name:<20} -> {' -> '.join(c[0] for c in cands)}")
 
 
-def _audit_rows(days):
+def _audit_rows(days, hours=None):
     f = audit_file()
     if not f.exists():
         return []
-    cutoff = time.time() - days * 86400
+    cutoff = time.time() - (hours * 3600 if hours else days * 86400)
     rows = []
     for line in f.read_text().splitlines():
         try:
@@ -570,38 +570,68 @@ def _audit_rows(days):
     return rows
 
 
+def _saved_tokens(r):
+    """Claude tokens kept out of context by one successful delegation (chars/4 estimate)."""
+    if not r.get("ok") or r.get("kind") == "verify" or r.get("conn") == engine.SELF:
+        return 0
+    back = r.get("chars_back", r.get("chars_out")) or 0  # rows from <=0.2.2 only have chars_out
+    return max(0, (r.get("chars_in") or 0) + (r.get("chars_gen") or 0) - back) // 4
+
+
+def _fmt(n):
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
 def cmd_stats(a, cfg):
-    rows = _audit_rows(a.days)
+    rows = _audit_rows(a.days, a.hours)
+    window = f"last {a.hours}h" if a.hours else f"last {a.days} day(s)"
     if not rows:
-        print("no usage yet")
+        print(f"no delegations in the {window}")
         return
-    by, saved, selfs, falls = {}, 0, 0, 0
+    acct, selfs, falls = {}, 0, 0
     for r in rows:
         if r.get("conn") == engine.SELF:
             selfs += 1
             continue
-        s = by.setdefault(r.get("conn"), {"ok": 0, "fail": 0, "tok": 0})
-        if r.get("ok"):
-            s["ok"] += 1
-            if r.get("kind") != "verify":
-                # what the delegate read + produced, minus what Claude reads back.
-                # rows from <=0.2.2 have no chars_gen/chars_back; treat their chars_out as the reply.
-                back = r.get("chars_back", r.get("chars_out")) or 0
-                saved += max(0, (r.get("chars_in") or 0) + (r.get("chars_gen") or 0) - back) // 4
-        else:
+        name = (r.get("conn") or "?").split(":")[0]
+        s = acct.setdefault(name, {"calls": 0, "verify": 0, "fail": 0, "saved": 0,
+                                   "in": 0, "cached": 0, "out": 0, "unknown": 0})
+        if not r.get("ok"):
             s["fail"] += 1
             falls += 1
-        s["tok"] += (r.get("tok_in") or 0) + (r.get("tok_out") or 0)
-    print(f"last {a.days} days")
-    for conn, s in sorted(by.items(), key=lambda kv: -kv[1]["ok"]):
-        print(f"  {conn:<34} ok={s['ok']:<4} failed={s['fail']:<3} their_tokens={s['tok']}")
-    print(f"  kept with Claude (self): {selfs}   fallbacks taken: {falls}")
-    print(f"  ~{saved:,} tokens of reading/writing kept out of Claude's context (chars/4 estimate,"
-          f" before any review Claude does of the results)")
+            continue
+        if r.get("kind") == "verify":
+            s["verify"] += 1
+        else:
+            s["calls"] += 1
+        s["saved"] += _saved_tokens(r)
+        tin, tout = r.get("tok_in") or 0, r.get("tok_out") or 0
+        s["in"] += tin
+        s["out"] += tout
+        s["cached"] += r.get("tok_cached") or 0
+        if not (tin or tout):
+            s["unknown"] += 1
+    print(f"relay stats, {window}\n")
+    print(f"{'account':<16}{'tasks':>6}{'checks':>7}{'failed':>7}   {'Claude saved':>12}   {'tokens it used (in / cached / out)':<36}")
+    tot_saved = tot_in = tot_out = 0
+    for name, s in sorted(acct.items(), key=lambda kv: -kv[1]["saved"]):
+        used = f"{_fmt(s['in'])} / {_fmt(s['cached'])} / {_fmt(s['out'])}"
+        if s["unknown"]:
+            used += f"  ({s['unknown']} call(s) not reported)"
+        print(f"{name:<16}{s['calls']:>6}{s['verify']:>7}{s['fail']:>7}   {'~' + _fmt(s['saved']):>12}   {used}")
+        tot_saved += s["saved"]
+        tot_in += s["in"]
+        tot_out += s["out"]
+    print(f"\n~{tot_saved:,} Claude tokens kept out of context; other accounts used "
+          f"{tot_in:,} in / {tot_out:,} out.")
+    print(f"kept with Claude (self): {selfs}   fallbacks taken: {falls}")
+    print("Claude saved = (files the delegate read + what it produced - the reply Claude read) / 4, "
+          "before any review Claude does. Checks are --verify calls: they cost the checker tokens "
+          "and save Claude nothing.")
 
 
 def cmd_audit(a, cfg):
-    rows = _audit_rows(a.days)
+    rows = _audit_rows(a.days, getattr(a, "hours", None))
     if a.json:
         for r in rows:
             print(json.dumps(r))
@@ -705,8 +735,9 @@ def build_parser():
     s.add_argument("--probe", action="store_true", help="send a tiny prompt to each connection")
     s.set_defaults(fn=cmd_doctor)
 
-    s = sub.add_parser("stats", help="usage and savings")
+    s = sub.add_parser("stats", help="usage and savings per account")
     s.add_argument("--days", type=int, default=7)
+    s.add_argument("--hours", type=float, help="only the last N hours (e.g. 1 for this test session)")
     s.set_defaults(fn=cmd_stats)
 
     s = sub.add_parser("audit", help="what was sent where")

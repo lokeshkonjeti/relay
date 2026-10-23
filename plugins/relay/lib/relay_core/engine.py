@@ -367,7 +367,7 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                 if kind == "read":
                     prompt = (f"{SYS_READ}\n{_task_line(task)}Read these paths: {ref_paths}\n"
                               f"Question: {instruction}\nDo not modify any files.")
-                    text, _, _ = backends.call_cli(name, conn, kind, prompt, s, model)
+                    text, pin, pout = backends.call_cli(name, conn, kind, prompt, s, model)
                     out = text
                 elif kind == "write":
                     before = snapshot([target])
@@ -375,7 +375,7 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                               f"Follow the conventions of: {ref_paths or 'the surrounding code'}.\n"
                               f"Only create or modify {target}. Do not run installs.\n"
                               "Finish with one line describing the file.")
-                    text, _, _ = backends.call_cli(name, conn, kind, prompt, s, model)
+                    text, pin, pout = backends.call_cli(name, conn, kind, prompt, s, model)
                     if str(target) not in changed(before, [target]) or not Path(target).exists():
                         raise RelayError(f"{label}: did not write {target}")
                     written = Path(target).read_text()
@@ -388,7 +388,7 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                               "Keep the change minimal and scoped. Do not refactor unrelated code or "
                               "weaken tests. Do not run installs or long builds.\n"
                               "Finish with: files changed, one line each.")
-                    text, _, _ = backends.call_cli(name, conn, kind, prompt, s, model)
+                    text, pin, pout = backends.call_cli(name, conn, kind, prompt, s, model)
                     diff = changed(before, files)
                     if not diff:
                         raise RelayError(f"{label}: made no changes ({text.strip()[:150]})")
@@ -398,7 +398,8 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                 chars_in = referenced_chars(paths or files, s)
             audit(cfg, task=task_name, conn=label, data=conn.get("data", "unverified"), ok=True,
                   kind=kind, secs=round(time.time() - t0, 1), files=sent_files,
-                  chars_in=chars_in, chars_gen=chars_gen, chars_back=len(out), tok_in=pin, tok_out=pout)
+                  chars_in=chars_in, chars_gen=chars_gen, chars_back=len(out), tok_in=pin, tok_out=pout,
+                  tok_cached=backends.LAST_USAGE.get("cached", 0) if conn["type"] == "cli" else 0)
             res = Result(label, out, notes, kind)
             want = verify or bool(task.get("verify"))
             if want:
@@ -436,14 +437,16 @@ def _verify(cfg, task, task_name, res, instruction, paths, files, target, exclud
                       "exactly one of:\nOK (one line), or\nISSUES (then bullets).\nDo not modify files.")
         try:
             if conn["type"] == "cli":
-                text, _, _ = backends.call_cli(name, conn, "read", prompt, cfg.settings, model)
+                text, vin, vout = backends.call_cli(name, conn, "read", prompt, cfg.settings, model)
             else:
                 corpus, _, _, _ = pack_corpus((paths or []) + (files or []) + ([target] if target else []),
                                              cfg.settings)
                 msgs = [{"role": "user", "content": f"<corpus>\n{corpus}\n</corpus>"},
                         {"role": "user", "content": prompt}]
-                text, _, _ = backends.call_api(name, conn, msgs, cfg.settings, model)
-            audit(cfg, task=task_name, conn=name, data=conn.get("data"), ok=True, kind="verify")
+                text, vin, vout = backends.call_api(name, conn, msgs, cfg.settings, model)
+            audit(cfg, task=task_name, conn=name, data=conn.get("data"), ok=True, kind="verify",
+                  tok_in=vin, tok_out=vout,
+                  tok_cached=backends.LAST_USAGE.get("cached", 0) if conn["type"] == "cli" else 0)
             verdict = text.strip()
             if res.kind == "read" and verdict.upper().startswith("CORRECTED"):
                 res.text = verdict

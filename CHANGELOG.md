@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+- `relay stats` breaks savings down per account: tasks, `--verify` checks, failures, Claude tokens
+  saved, and tokens each account used (input / cached / output). `--hours N` covers a short window
+  such as one test session.
+- Codex runs now record their real token usage (via `codex exec --json`). Older Codex versions
+  without `--json` are retried without it.
+- Verifier calls log their token usage too.
+
 ## 0.3.0
 - **`relay up`**: one-command setup and re-test. It finds installed CLIs and API keys, tests every
   account in parallel, switches off failing accounts (with the reason) and back on once they
