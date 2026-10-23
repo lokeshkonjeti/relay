@@ -152,6 +152,27 @@ Second account of the same tool: give it its own config folder with `--env`, the
 your terminal, e.g. `CODEX_HOME=~/.codex-work codex login`. Keys are read from environment
 variables; Relay never stores them.
 
+### Letting agents run tests that need a database
+
+Codex's sandbox has no network by default, so it can write tests but can't run anything that talks
+to Postgres, Redis or a local API, even on localhost. Claude then runs them instead, which works
+but costs Claude tokens. Relay can loosen the sandbox for write and edit runs only (reads never get
+network):
+
+```
+relay connect set codex network=local   # localhost only, through Codex's network proxy (recommended)
+relay connect set codex network=on      # unrestricted internet access
+relay connect set codex network=off     # default
+```
+
+`local` is the safer choice: code Codex runs can reach your dev database but not the internet,
+which limits what a prompt-injected dependency or file could do. It relies on Codex's
+`network_proxy` feature. If your database URL uses a Unix socket instead of `localhost:5432`,
+switch to `localhost` or use `on`.
+
+For other CLI flags, `extra_args` adds raw arguments per task kind:
+`relay connect set codex 'extra_args={"write": ["-c", "model_reasoning_effort=low"]}'`.
+
 ## Tasks, roles and packs
 
 A **task** is a kind of work: a kind (`read`, `write`, `edit`), a short description Claude sees,

@@ -117,13 +117,47 @@ def call_api(name, conn, messages, settings, model=None):
 
 # ---------------------------------------------------------------- CLI
 
+# Sandbox network for agent CLIs, applied to write/edit runs only (reads never need it).
+#   off   : the CLI's default sandbox (Codex: no network at all)
+#   local : localhost only, e.g. a dev Postgres/Redis/API for running tests (Codex network proxy)
+#   on    : unrestricted outbound network
+NETWORK_ARGS = {
+    "codex": {
+        "local": ["-c", "sandbox_workspace_write.network_access=true",
+                  "-c", "features.network_proxy.enabled=true",
+                  "-c", 'features.network_proxy.domains={ "localhost" = "allow", "127.0.0.1" = "allow" }'],
+        "on": ["-c", "sandbox_workspace_write.network_access=true"],
+    },
+}
+NETWORK_MODES = ["off", "local", "on"]
+
+
+def _preset_of(conn):
+    return conn.get("preset") or Path(str(conn.get("bin", ""))).name
+
+
+def extra_cli_args(conn, kind):
+    """Args inserted right after the binary, so they also work with configs saved by older versions."""
+    out = []
+    net = conn.get("network", "off")
+    if kind in ("write", "edit") and net != "off":
+        table = NETWORK_ARGS.get(_preset_of(conn))
+        if not table:
+            raise RelayError(f"network={net} is not supported for {_preset_of(conn)}; use extra_args")
+        out += table[net]
+    extra = conn.get("extra_args") or []
+    if isinstance(extra, dict):
+        extra = extra.get(kind, [])
+    return out + [_expand(a) for a in extra]
+
+
 def build_cli_cmd(conn, kind, prompt, out_path, model=None):
     model = model or conn.get("model")
     variables = {"prompt": prompt, "out": str(out_path), "model": model or ""}
     variables.update((conn.get("mode_vars") or {}).get(kind, {}))
     model_args = [a.replace("{model}", model) for a in conn.get("model_args", [])] if model else []
     mode_args = list((conn.get("mode_args") or {}).get(kind, []))
-    cmd = [_expand(conn["bin"])]
+    cmd = [_expand(conn["bin"])] + extra_cli_args(conn, kind)
     for a in conn.get("args", ["{prompt}"]):
         if a == "{model_args}":
             cmd += model_args

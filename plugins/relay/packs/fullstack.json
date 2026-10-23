@@ -54,6 +54,7 @@
     "er-diagram": {
       "kind": "write",
       "route": [
+        "@agent",
         "@cheap"
       ],
       "desc": "Mermaid ER diagram from models/migrations"

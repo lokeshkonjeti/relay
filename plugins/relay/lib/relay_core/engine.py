@@ -145,6 +145,26 @@ def pack_corpus(paths, settings):
     return "\n\n".join(docs), total, used, skipped
 
 
+def referenced_chars(paths, settings, limit=5_000_000):
+    """Size of the text files a CLI agent was pointed at (it reads them itself, so relay never sees them)."""
+    total = 0
+    try:
+        for f in collect_files(paths or [], settings):
+            total += f.stat().st_size
+            if total > limit:
+                return limit
+    except (RelayError, OSError):
+        pass
+    return total
+
+
+def diff_chars(files):
+    if not shutil.which("git") or not files:
+        return 0
+    r = subprocess.run(["git", "diff", "--", *map(str, files)], capture_output=True, text=True)
+    return len(r.stdout) if r.returncode == 0 else 0
+
+
 FENCE = re.compile(r"^\s*(```|~~~)")
 MARKDOWN_EXT = {".md", ".mdx", ".markdown"}
 
@@ -289,7 +309,7 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
         conn = cfg.connections[name]
         label = f"{name}:{model}" if model else name
         t0 = time.time()
-        sent_files, chars_in = [], 0
+        sent_files, chars_in, chars_gen = [], 0, 0
         try:
             if conn["type"] == "api":
                 if kind == "edit":
@@ -312,6 +332,7 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                     diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm=""))
                     plus = sum(1 for d in diff if d.startswith("+") and not d.startswith("+++"))
                     minus = sum(1 for d in diff if d.startswith("-") and not d.startswith("---"))
+                    chars_gen = sum(len(d) for d in diff)
                     out = f"edited {src} (+{plus} -{minus}). Review with `git diff {src}`."
                 else:
                     if corpus is None and (paths or (kind == "write" and files)):
@@ -336,6 +357,7 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                         check_body(label, body, target)
                         Path(target).parent.mkdir(parents=True, exist_ok=True)
                         Path(target).write_text(body)
+                        chars_gen = len(body)
                         out = f"wrote {target} ({len(body.splitlines())} lines). Review before relying on it."
             else:  # cli agent
                 pin = pout = 0
@@ -354,7 +376,8 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                     text, _, _ = backends.call_cli(name, conn, kind, prompt, s, model)
                     if str(target) not in changed(before, [target]) or not Path(target).exists():
                         raise RelayError(f"{label}: did not write {target}")
-                    n = len(Path(target).read_text().splitlines())
+                    written = Path(target).read_text()
+                    n, chars_gen = len(written.splitlines()), len(written)
                     last = text.strip().splitlines()[-1][:200] if text.strip() else ""
                     out = f"wrote {target} ({n} lines). {last}"
                 else:
@@ -367,11 +390,13 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                     diff = changed(before, files)
                     if not diff:
                         raise RelayError(f"{label}: made no changes ({text.strip()[:150]})")
+                    chars_gen = diff_chars(diff)
                     out = f"{text.strip()}\nchanged: {', '.join(diff)}"
                 sent_files = [str(p) for p in (paths or files or [])] + ([str(target)] if target else [])
+                chars_in = referenced_chars(paths or files, s)
             audit(cfg, task=task_name, conn=label, data=conn.get("data", "unverified"), ok=True,
                   kind=kind, secs=round(time.time() - t0, 1), files=sent_files,
-                  chars_in=chars_in, chars_out=len(out), tok_in=pin, tok_out=pout)
+                  chars_in=chars_in, chars_gen=chars_gen, chars_back=len(out), tok_in=pin, tok_out=pout)
             res = Result(label, out, notes, kind)
             want = verify or bool(task.get("verify"))
             if want:

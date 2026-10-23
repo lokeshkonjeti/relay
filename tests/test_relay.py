@@ -159,9 +159,9 @@ class RelayTest(unittest.TestCase):
     def test_public_never_stops_falls_back_on_quota(self):
         self.base_config()
         BEHAVIOUR["deepseek-chat"] = "429"
-        out, _ = self.relay("run", "er-diagram", "ER diagram of models", "--paths", "src",
+        out, _ = self.relay("run", "docs", "README for src", "--paths", "src",
                             "--target", "docs/er.md")
-        self.assertIn("er-diagram → ollama-cloud]", out)
+        self.assertIn("docs → ollama-cloud]", out)
         self.assertIn("failed deepseek: HTTP 429", out)
         self.assertTrue((self.repo / "docs/er.md").exists())
 
@@ -387,6 +387,53 @@ class RelayTest(unittest.TestCase):
         out, _ = self.relay("run", "diagram", "design flow", "--paths", "src", "--target", "docs/flow.md")
         self.assertIn("unclosed code block", out)
         self.assertIn("diagram → ollama-cloud]", out)
+
+    def test_codex_network_modes(self):
+        self.base_config()
+        self.relay("connect", "set", "codex", "network=local")
+        self.relay("run", "unit-tests", "tests for gcs", "--paths", "src/gcs.py", "--target", "tests/test_gcs.py")
+        args = self.agent_calls()[-1]["args"]
+        self.assertEqual(args[0], "-c", "overrides go right after the binary, before 'exec'")
+        self.assertIn("sandbox_workspace_write.network_access=true", args)
+        self.assertIn("features.network_proxy.enabled=true", args)
+        self.assertTrue(any('"localhost" = "allow"' in a for a in args))
+        self.assertEqual(args[args.index("exec") + 1:args.index("exec") + 2], ["--skip-git-repo-check"])
+        # reads never get network
+        self.relay("run", "review", "q", "--paths", "src", "--via", "codex")
+        self.assertNotIn("sandbox_workspace_write.network_access=true", self.agent_calls()[-1]["args"])
+        self.relay("connect", "set", "codex", "network=on")
+        self.relay("run", "small-fix", "x", "--files", "src/gcs.py", "--via", "codex")
+        args = self.agent_calls()[-1]["args"]
+        self.assertIn("sandbox_workspace_write.network_access=true", args)
+        self.assertNotIn("features.network_proxy.enabled=true", args)
+        out, code = self.relay("connect", "set", "codex", "network=maybe", ok=False)
+        self.assertIn("network must be one of", out)
+
+    def test_extra_args_for_any_cli(self):
+        self.base_config()
+        self.relay("connect", "set", "codex", 'extra_args={"write": ["-c", "model_reasoning_effort=low"]}')
+        self.relay("run", "unit-tests", "t", "--paths", "src/gcs.py", "--target", "tests/t.py")
+        self.assertEqual(self.agent_calls()[-1]["args"][:2], ["-c", "model_reasoning_effort=low"])
+
+    def test_er_diagram_prefers_agent(self):
+        self.base_config()
+        out, _ = self.relay("run", "er-diagram", "ER of models", "--paths", "src", "--target", "docs/er.md")
+        self.assertIn("er-diagram → codex]", out)
+
+    def test_savings_counted_for_cli_tasks(self):
+        self.base_config()
+        self.relay("run", "unit-tests", "tests", "--paths", "src", "--target", "tests/test_x.py")
+        row = [json.loads(l) for l in (self.home / "audit.jsonl").read_text().splitlines()][-1]
+        expected_in = sum(f.stat().st_size for f in (self.repo / "src").iterdir())
+        self.assertEqual(row["chars_in"], expected_in)
+        self.assertEqual(row["chars_gen"], len((self.repo / "tests/test_x.py").read_text()))
+        self.assertGreater(row["chars_back"], 0)
+        with open(self.home / "audit.jsonl", "a") as fh:  # a row written by 0.2.2
+            fh.write(json.dumps({"task": "read", "conn": "x", "ok": True, "kind": "read",
+                                 "chars_in": 4000, "chars_out": 400, "ts": row["ts"]}) + "\n")
+        out, _ = self.relay("stats")
+        saved = (row["chars_in"] + row["chars_gen"] - row["chars_back"]) // 4 + (4000 - 400) // 4
+        self.assertIn(f"~{saved:,} tokens", out)
 
     def test_doctor_runs(self):
         self.base_config()

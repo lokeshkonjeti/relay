@@ -174,6 +174,8 @@ def cmd_connect(a, cfg):
             pol = "" if allowed else f"  [{reason}]"
             model = f" model={c['model']}" if c.get("model") else ""
             acct = f" env={','.join(c.get('env', {}))}" if c.get("env") else ""
+            if c.get("network", "off") != "off":
+                acct += f" network={c['network']}"
             print(f"{n:<16} {c.get('type'):<4} data={c.get('data', 'unverified'):<10} cost={c.get('cost', '?'):<12}{model}{acct}  {state}{pol}")
         return
     _require_unlocked(cfg, "changing connections")
@@ -224,6 +226,8 @@ def cmd_connect(a, cfg):
                 c[k] = _split(v)
             elif k == "data" and v not in DATA_CLASSES:
                 raise RelayError(f"data must be one of {DATA_CLASSES}")
+            elif k == "network" and v not in backends.NETWORK_MODES:
+                raise RelayError(f"network must be one of {backends.NETWORK_MODES}")
             elif k == "cost" and v not in COST_RANK:
                 raise RelayError(f"cost must be one of {list(COST_RANK)}")
             else:
@@ -435,7 +439,10 @@ def cmd_stats(a, cfg):
         if r.get("ok"):
             s["ok"] += 1
             if r.get("kind") != "verify":
-                saved += ((r.get("chars_in") or 0) + (r.get("chars_out") or 0)) // 4
+                # what the delegate read + produced, minus what Claude reads back.
+                # rows from <=0.2.2 have no chars_gen/chars_back; treat their chars_out as the reply.
+                back = r.get("chars_back", r.get("chars_out")) or 0
+                saved += max(0, (r.get("chars_in") or 0) + (r.get("chars_gen") or 0) - back) // 4
         else:
             s["fail"] += 1
             falls += 1
@@ -444,7 +451,8 @@ def cmd_stats(a, cfg):
     for conn, s in sorted(by.items(), key=lambda kv: -kv[1]["ok"]):
         print(f"  {conn:<34} ok={s['ok']:<4} failed={s['fail']:<3} their_tokens={s['tok']}")
     print(f"  kept with Claude (self): {selfs}   fallbacks taken: {falls}")
-    print(f"  ~{saved:,} tokens of reading/writing kept out of Claude's context (chars/4 estimate)")
+    print(f"  ~{saved:,} tokens of reading/writing kept out of Claude's context (chars/4 estimate,"
+          f" before any review Claude does of the results)")
 
 
 def cmd_audit(a, cfg):
