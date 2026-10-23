@@ -28,7 +28,7 @@ small-fix      -> codex-work             docs         -> ollama-local
 In Claude Code:
 
 ```
-/plugin marketplace add <owner>/<repo>
+/plugin marketplace add lokeshkonjeti/relay
 /plugin install relay@relay-marketplace
 /relay:setup
 ```
