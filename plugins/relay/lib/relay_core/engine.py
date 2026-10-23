@@ -9,8 +9,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import backends
-from .config import COST_RANK, RelayError, audit_file, project_root
+from . import backends, envdetect
+from .config import COST_RANK, RelayError, audit_file, project_root, relay_home
 
 SELF = "self"
 
@@ -256,6 +256,27 @@ def audit(cfg, **rec):
         pass
 
 
+# ---------------------------------------------------------------- project environment
+
+def project_env(cfg):
+    root = project_root()
+    over = (cfg.global_raw.get("projects") or {}).get(str(root))
+    try:
+        return envdetect.detect(root, over)
+    except Exception:  # detection must never break a delegation
+        return {"tests": [], "notes": [], "local_services": False}
+
+
+def run_conn(conn, env):
+    """Per-run copy of a connection with network 'auto' resolved for this project."""
+    c = dict(conn)
+    net = c.get("network", "auto")
+    if net == "auto":
+        supported = backends._preset_of(c) in backends.NETWORK_ARGS
+        c["network"] = "local" if (supported and env.get("local_services")) else "off"
+    return c
+
+
 # ---------------------------------------------------------------- prompts
 
 SYS_READ = ("You are a precise code analyst. Answer only from the files given. Cite file paths and "
@@ -297,10 +318,22 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
         files = paths
     if target and Path(target).exists() and not force:
         raise RelayError(f"{target} exists; pass --force or pick a new path")
+    missing = [p for p in (paths or []) + (files or []) if not Path(p).exists()]
+    if missing:
+        paths = [p for p in (paths or []) if Path(p).exists()] or None
+        files = [p for p in (files or []) if Path(p).exists()] or None
+        if kind == "read" and not paths:
+            raise RelayError(f"none of the paths exist: {', '.join(missing)}")
+        if kind == "edit" and not files:
+            raise RelayError(f"none of the files exist: {', '.join(missing)}")
 
     cands, skipped = resolve(cfg, task_name, via)
     notes = [f"skipped {s}" for s in skipped]
+    if missing:
+        notes.insert(0, f"ignored paths that don't exist: {', '.join(missing)}")
     s = cfg.settings
+    env = project_env(cfg)
+    env_text = envdetect.prompt_block(env)
 
     corpus = used = None
     for name, model in cands:
@@ -363,19 +396,25 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                         out = f"wrote {target} ({len(body.splitlines())} lines). Review before relying on it."
             else:  # cli agent
                 pin = pout = 0
+                rconn = run_conn(conn, env)
                 ref_paths = " ".join(map(str, paths or files or []))
                 if kind == "read":
                     prompt = (f"{SYS_READ}\n{_task_line(task)}Read these paths: {ref_paths}\n"
                               f"Question: {instruction}\nDo not modify any files.")
-                    text, pin, pout = backends.call_cli(name, conn, kind, prompt, s, model)
+                    text, pin, pout = backends.call_cli(name, rconn, kind, prompt, s, model)
                     out = text
                 elif kind == "write":
                     before = snapshot([target])
-                    prompt = (f"{_task_line(task)}Create the file {target}.\nSpec: {instruction}\n"
+                    run_tests = ""
+                    if envdetect.is_test_path(target) and env.get("tests"):
+                        run_tests = (f"After writing it, run {target} with the test command above and fix "
+                                     f"{target} (only) until it passes, or explain why it cannot. "
+                                     "Report the pass/fail counts.\n")
+                    prompt = (f"{env_text}{_task_line(task)}Create the file {target}.\nSpec: {instruction}\n"
                               f"Follow the conventions of: {ref_paths or 'the surrounding code'}.\n"
-                              f"Only create or modify {target}. Do not run installs.\n"
-                              "Finish with one line describing the file.")
-                    text, pin, pout = backends.call_cli(name, conn, kind, prompt, s, model)
+                              f"Only create or modify {target}. Do not run installs.\n{run_tests}"
+                              "Finish with one line describing the file" + (" and the test result." if run_tests else "."))
+                    text, pin, pout = backends.call_cli(name, rconn, kind, prompt, s, model)
                     if str(target) not in changed(before, [target]) or not Path(target).exists():
                         raise RelayError(f"{label}: did not write {target}")
                     written = Path(target).read_text()
@@ -384,11 +423,12 @@ def run_task(cfg, task_name, instruction, paths=None, files=None, target=None, f
                     out = f"wrote {target} ({n} lines). {last}"
                 else:
                     before = snapshot(files)
-                    prompt = (f"{_task_line(task)}{instruction}\nRelevant files: {' '.join(files)}\n"
+                    prompt = (f"{env_text}{_task_line(task)}{instruction}\nRelevant files: {' '.join(files)}\n"
                               "Keep the change minimal and scoped. Do not refactor unrelated code or "
-                              "weaken tests. Do not run installs or long builds.\n"
-                              "Finish with: files changed, one line each.")
-                    text, pin, pout = backends.call_cli(name, conn, kind, prompt, s, model)
+                              "weaken tests. Do not run installs or long builds. If tests cover this "
+                              "code, run them with the test command above.\n"
+                              "Finish with: files changed, one line each, and the test result if run.")
+                    text, pin, pout = backends.call_cli(name, rconn, kind, prompt, s, model)
                     diff = changed(before, files)
                     if not diff:
                         raise RelayError(f"{label}: made no changes ({text.strip()[:150]})")
@@ -455,5 +495,7 @@ def _verify(cfg, task, task_name, res, instruction, paths, files, target, exclud
                 res.text = f"{res.text}\n[verified by {name}] {verdict}"
             return
         except RelayError as e:
+            audit(cfg, task=task_name, conn=name, data=conn.get("data"), ok=False, kind="verify",
+                  error=str(e)[:200])
             res.notes.append(f"verifier failed {e}")
     res.notes.append("UNVERIFIED: no verifier available")

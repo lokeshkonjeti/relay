@@ -509,6 +509,94 @@ class RelayTest(unittest.TestCase):
         out, _ = self.relay("stats")
         self.assertIn("1 call(s) not reported", out)
 
+    def schedmax_like(self):
+        r = self.repo
+        (r / "backend/.venv/bin").mkdir(parents=True)
+        (r / "backend/.venv/bin/python").write_text("")
+        (r / "backend/tests").mkdir(parents=True)
+        (r / "backend/tests/conftest.py").write_text("")
+        (r / "backend/.env").write_text("DATABASE_URL=postgresql://app:s3cret-pw@localhost:5432/app\n")
+        (r / "pnpm-lock.yaml").write_text("")
+        (r / "package.json").write_text('{"scripts": {"test": "vitest run", "lint": "eslint ."}}')
+
+    def test_env_detected_and_shown(self):
+        self.base_config()
+        self.schedmax_like()
+        out, _ = self.relay("env")
+        self.assertIn("backend/.venv/bin/python -m pytest backend/tests -q", out)
+        self.assertIn("pnpm test", out)
+        self.assertIn("local services: yes", out)
+        self.assertNotIn("s3cret", out)
+        self.relay("env", "set", "test=make test")
+        out, _ = self.relay("env")
+        self.assertIn("tests:   make test", out)
+        self.assertIn("overrides applied", out)
+        self.relay("env", "clear")
+        out, _ = self.relay("env")
+        self.assertNotIn("make test", out)
+        out, _ = self.relay("up", "--no-probe")
+        self.assertIn("tests here: pnpm test ; backend/.venv/bin/python -m pytest", out)
+
+    def test_agent_gets_env_runs_tests_and_auto_network(self):
+        self.base_config()
+        self.schedmax_like()
+        out, _ = self.relay("run", "unit-tests", "ramp-up tests", "--paths", "src/gcs.py",
+                            "--target", "backend/tests/test_ramp.py")
+        args = self.agent_calls()[-1]["args"]
+        prompt = args[-1]
+        self.assertIn("backend/.venv/bin/python -m pytest backend/tests -q", prompt)
+        self.assertIn("run backend/tests/test_ramp.py with the test command above", prompt)
+        self.assertIn("not the system python", prompt)
+        self.assertNotIn("s3cret", prompt)
+        self.assertIn("sandbox_workspace_write.network_access=true", args)  # auto -> local
+        self.assertIn("features.network_proxy.enabled=true", args)
+        # docs are not tests: no test-run instruction
+        self.relay("run", "refactor-mechanical", "rename x", "--files", "src/gcs.py")
+        self.assertIn("If tests cover this code, run them", self.agent_calls()[-1]["args"][-1])
+        # explicit off wins over auto
+        self.relay("connect", "set", "codex", "network=off")
+        self.relay("run", "unit-tests", "t", "--paths", "src/gcs.py", "--target", "backend/tests/test_b.py")
+        self.assertNotIn("sandbox_workspace_write.network_access=true", self.agent_calls()[-1]["args"])
+
+    def test_no_local_services_no_network(self):
+        self.base_config()
+        self.relay("run", "unit-tests", "t", "--paths", "src/gcs.py", "--target", "tests/test_c.py")
+        self.assertNotIn("sandbox_workspace_write.network_access=true", self.agent_calls()[-1]["args"])
+
+    def test_missing_paths_are_skipped_not_fatal(self):
+        self.base_config()
+        out, _ = self.relay("run", "read-codebase", "which port?", "--paths", "src", "backend/app/deps.py")
+        self.assertIn("read-codebase → ollama-cloud]", out)  # no fallback to codex
+        self.assertIn("ignored paths that don't exist: backend/app/deps.py", out)
+        out, code = self.relay("run", "read-codebase", "q", "--paths", "nope.py", ok=False)
+        self.assertEqual(code, 2)
+        self.assertIn("none of the paths exist", out)
+        self.assertEqual(len(REQUESTS), 1)
+
+    def test_long_answer_saved_not_cut(self):
+        self.base_config()
+        cfg = json.loads((self.home / "config.json").read_text())
+        cfg.setdefault("settings", {})["max_output_chars"] = 40
+        (self.home / "config.json").write_text(json.dumps(cfg))
+        out, _ = self.relay("run", "read-codebase", "which port?", "--paths", "src")
+        self.assertIn("Full answer saved to", out)
+        self.assertIn("do not re-run the task", out)
+        saved = list((self.home / "outputs").glob("*-read-codebase.md"))
+        self.assertEqual(len(saved), 1)
+        self.assertIn("answer from deepseek-v4-flash:cloud", saved[0].read_text())
+
+    def test_failed_verifier_is_logged(self):
+        self.base_config()
+        out, _ = self.relay("run", "read-codebase", "q", "--paths", "src", "--verify", FAKE_FAIL="codex")
+        self.assertIn("verifier failed", out)
+        rows = [json.loads(l) for l in (self.home / "audit.jsonl").read_text().splitlines()]
+        v = [r for r in rows if r.get("kind") == "verify"]
+        self.assertEqual(len(v), 1)
+        self.assertFalse(v[0]["ok"])
+        self.assertIn("usage limit", v[0]["error"])
+        out, _ = self.relay("stats")
+        self.assertRegex(out, r"codex\s+0\s+0\s+1")
+
     def test_doctor_runs(self):
         self.base_config()
         out, _ = self.relay("doctor", "--probe")

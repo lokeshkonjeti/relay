@@ -129,7 +129,7 @@ NETWORK_ARGS = {
         "on": ["-c", "sandbox_workspace_write.network_access=true"],
     },
 }
-NETWORK_MODES = ["off", "local", "on"]
+NETWORK_MODES = ["auto", "off", "local", "on"]  # auto: local when the project uses local services
 
 
 def _preset_of(conn):
@@ -140,6 +140,8 @@ def extra_cli_args(conn, kind):
     """Args inserted right after the binary, so they also work with configs saved by older versions."""
     out = []
     net = conn.get("network", "off")
+    if net == "auto":
+        net = "off"  # engine resolves auto per project before calling; unresolved means off
     if kind in ("write", "edit") and net != "off":
         table = NETWORK_ARGS.get(_preset_of(conn))
         if not table:

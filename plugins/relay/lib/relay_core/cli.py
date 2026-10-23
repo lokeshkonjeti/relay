@@ -11,7 +11,8 @@ from pathlib import Path
 from . import __version__, backends, engine
 from .config import (COST_RANK, DATA_CLASSES, MODES, TASK_KINDS, Config, RelayError, audit_file,
                      global_file, list_packs, load_json, load_pack, presets, project_file,
-                     project_root, save_json)
+                     project_root, relay_home, save_json)
+from . import envdetect
 
 ROLE_DEFAULTS = {
     "reader": ["ollama-cloud", "ollama-api", "ollama-local", "deepseek", "codex"],
@@ -57,7 +58,19 @@ def cmd_run(a, cfg):
         body = f"{head}{res.conn}]\n{res.text}"
     if res.notes:
         body += "\nnotes: " + "; ".join(res.notes)
-    print(engine.cap(body, cfg.settings))
+    limit = cfg.settings["max_output_chars"]
+    if len(body) > limit:
+        out_dir = relay_home() / "outputs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        f = out_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{a.task}.md"
+        f.write_text(body + "\n")
+        keep = sorted(out_dir.glob("*.md"))
+        for old in keep[:-50]:  # keep the 50 most recent
+            old.unlink(missing_ok=True)
+        print(body[:limit].rstrip() + f"\n\n[relay: answer is {len(body):,} chars; the first {limit:,} are above. "
+              f"Full answer saved to {f}. Read that file for the rest; do not re-run the task.]")
+    else:
+        print(body)
 
 
 # ---------------------------------------------------------------- tasks / routes
@@ -509,6 +522,9 @@ def cmd_up(a, cfg):
         print(f"  · not installed: {', '.join(missing)}")
     for note in proj_notes:
         print(f"  · {note}")
+    penv = envdetect.detect(project_root(), (cfg.global_raw.get("projects") or {}).get(str(project_root())))
+    if penv["tests"]:
+        print(f"  · tests here: {' ; '.join(penv['tests'])}" + ("  (local services detected)" if penv["local_services"] else ""))
     delegated, kept, stuck = [], [], []
     for name in sorted(cfg.tasks):
         cands, _ = engine.resolve(cfg, name)
@@ -526,6 +542,30 @@ def cmd_up(a, cfg):
     if any(not g for g, _ in results.values()):
         print("\nfix an account, then run `relay up` again to re-test it.")
     print("ready: start Claude Code in your project and work as usual.")
+
+
+def cmd_env(a, cfg):
+    root = project_root()
+    data = _global()
+    projects = data.setdefault("projects", {})
+    if a.action == "set":
+        over = projects.setdefault(str(root), {})
+        for pair in a.pairs:
+            k, _, v = pair.partition("=")
+            if k not in ("test", "note", "local_services"):
+                raise RelayError("relay env set test=\"<command>\" | note=\"<text>\" | local_services=true|false")
+            over[k] = (v.lower() in ("1", "true", "yes")) if k == "local_services" else v
+        save_json(global_file(), data)
+    elif a.action == "clear":
+        projects.pop(str(root), None)
+        save_json(global_file(), data)
+    env = envdetect.detect(root, projects.get(str(root)))
+    print(f"project: {root}" + ("  (your overrides applied)" if projects.get(str(root)) else ""))
+    print("tests:   " + (" ; ".join(env["tests"]) or "none detected (set one: relay env set test=\"...\")"))
+    for n in env["notes"]:
+        print(f"note:    {n}")
+    print(f"local services: {'yes' if env['local_services'] else 'no'}"
+          + ("  -> Codex gets localhost-only network on write/edit (network=auto)" if env["local_services"] else ""))
 
 
 # ---------------------------------------------------------------- doctor / stats / audit
@@ -730,6 +770,11 @@ def build_parser():
     s.add_argument("--no-probe", action="store_true", help="skip test prompts (only check installs/keys)")
     s.add_argument("--no-claude-md", action="store_true", help="don't add the delegation rule to CLAUDE.md")
     s.set_defaults(fn=cmd_up)
+
+    s = sub.add_parser("env", help="show | set test=\"...\" | clear: how this project runs tests")
+    s.add_argument("action", nargs="?", default="show", choices=["show", "set", "clear"])
+    s.add_argument("pairs", nargs="*")
+    s.set_defaults(fn=cmd_env)
 
     s = sub.add_parser("doctor", help="check connections and routes")
     s.add_argument("--probe", action="store_true", help="send a tiny prompt to each connection")

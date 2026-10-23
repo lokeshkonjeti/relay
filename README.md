@@ -164,19 +164,42 @@ Second account of the same tool: give it its own config folder with `--env`, the
 your terminal, e.g. `CODEX_HOME=~/.codex-work codex login`. Keys are read from environment
 variables; Relay never stores them.
 
-### Letting agents run tests that need a database
+### Project environment: detected automatically
 
-Codex's sandbox has no network by default, so it can write tests but can't run anything that talks
-to Postgres, Redis or a local API, even on localhost. Claude then runs them instead, which works
-but costs Claude tokens. Relay can loosen the sandbox for write and edit runs only (reads never get
-network):
+Agents only help if they can run what they write. Before each task, Relay looks at the repo and
+tells the agent how this project runs its tests:
 
-Easiest: `relay up --network local` (or `/relay:setup network=local`). To set it directly:
+- **Python:** the project's virtualenv (`.venv`, `venv`, also inside `backend/` and similar
+  folders), or `uv`, Poetry or Pipenv
+- **JS/TS:** `npm`, `pnpm`, `yarn` or `bun` (from the lockfile), plus `typecheck`/`lint` scripts
+- **Java, Go, .NET:** Maven (`mvnw`), Gradle (`gradlew`), `go test`, `dotnet test`
+- **Local services:** whether the database, cache or queue in `.env` or `docker-compose` points at
+  `localhost`. Only the host is checked; passwords and keys in `.env` are never read into prompts.
+
+When an agent writes a test file, it's told to run it with that command and fix it until it
+passes, so Claude doesn't have to. See what Relay detected, and correct it if needed:
 
 ```
-relay connect set codex network=local   # localhost only, through Codex's network proxy (recommended)
+relay env                              # what Relay detected for this repo
+relay env set test="make test"         # override (stored in your global config, not the repo)
+relay env clear
+```
+
+This is passed in the instructions sent with each task rather than written to `AGENTS.md`, so it
+works for every agent and adds nothing to your repo.
+
+### Letting agents run tests that need a database
+
+Codex's sandbox blocks all network by default, even `localhost`. Relay's default for Codex is
+`network=auto`: if the project uses local services, Codex gets **localhost-only** network on write
+and edit runs (reads never get network), so it can run tests against your dev database. Otherwise
+it gets none. To choose explicitly:
+
+```
+relay connect set codex network=auto    # default: local when the project needs it, else off
+relay connect set codex network=local   # always localhost only (through Codex's network proxy)
 relay connect set codex network=on      # unrestricted internet access
-relay connect set codex network=off     # default
+relay connect set codex network=off     # never
 ```
 
 `local` is the safer choice: code Codex runs can reach your dev database but not the internet,
@@ -276,6 +299,7 @@ Admins can drop a policy file at `/etc/relay/policy.json`,
 | `relay connect presets|list|add|set|rm` | accounts and models |
 | `relay mode [public|private] [--project]` | modes |
 | `relay up [--private] [--network local] [--fresh]` | one-step setup and re-test |
+| `relay env [set test="..." \| clear]` | how this project runs its tests (auto-detected) |
 | `relay doctor [--probe]` / `relay stats` / `relay audit` / `relay policy` | check and report |
 
 In Claude Code: `/relay:setup`, `/relay:config <change>`, `/relay:stats`, `/relay:handoff`.

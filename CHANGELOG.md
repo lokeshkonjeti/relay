@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2
+- **Detects how each project runs its tests**: Python venvs (including `backend/.venv`), uv,
+  Poetry, Pipenv, npm/pnpm/yarn/bun scripts, Maven, Gradle, Go and .NET. Relay passes this to
+  every agent with each task. Agents now run the test files they write with the right interpreter
+  and fix them until they pass. `relay env` shows what was detected, and `relay env set` overrides it.
+- Codex network defaults to `auto`: localhost-only on write and edit runs when the project uses
+  local services such as a dev database, and none otherwise. Only `.env` hosts are checked, never
+  secret values.
+- Fix: a path that doesn't exist no longer fails the whole call (which forced a slow, costly
+  fallback). It's skipped with a note.
+- Fix: answers longer than the output cap are saved in full to `~/.config/relay/outputs/` and
+  Claude is pointed to the file, instead of the answer being cut off and the task re-run.
+- Fix: failed `--verify` calls are written to the audit log and counted in `relay stats`.
+
 ## 0.3.1
 - `relay stats` breaks savings down per account: tasks, `--verify` checks, failures, Claude tokens
   saved, and tokens each account used (input / cached / output). `--hours N` covers a short window
