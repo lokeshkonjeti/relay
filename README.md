@@ -90,11 +90,12 @@ Things that trip people up:
 
 After installing or logging in to anything, run `relay up` (or `/relay:setup`) again.
 
-### Make Claude delegate without being asked
+### Making Claude delegate without being asked
 
-Skills only nudge Claude, so out of the box it delegates when you ask ("use relay to write tests
-for X"). To make it routine in a project, let `/relay:setup` add this to the project's `CLAUDE.md`
-(about 70 tokens per session), or paste it yourself:
+A skill alone only nudges Claude: without a rule in the project it tends to do everything itself
+unless you say "use relay to ...". So `relay up` adds this block to the project's `CLAUDE.md`
+once, and never twice. It costs about 70 tokens per session. Skip it with
+`relay up --no-claude-md`, or paste it into other repos yourself:
 
 ```markdown
 ## Delegation (relay)
@@ -170,6 +171,8 @@ to Postgres, Redis or a local API, even on localhost. Claude then runs them inst
 but costs Claude tokens. Relay can loosen the sandbox for write and edit runs only (reads never get
 network):
 
+Easiest: `relay up --network local` (or `/relay:setup network=local`). To set it directly:
+
 ```
 relay connect set codex network=local   # localhost only, through Codex's network proxy (recommended)
 relay connect set codex network=on      # unrestricted internet access
@@ -183,6 +186,20 @@ switch to `localhost` or use `on`.
 
 For other CLI flags, `extra_args` adds raw arguments per task kind:
 `relay connect set codex 'extra_args={"write": ["-c", "model_reasoning_effort=low"]}'`.
+
+### Seeing what it did and saved
+
+```
+tail -F ~/.config/relay/audit.jsonl   # watch delegations live, one line per finished call
+relay audit --days 1                  # what was sent where today: task, account, data class, files
+relay stats --days 7                  # calls per account, fallbacks, and Claude tokens saved
+```
+
+The saving per call is an estimate: what the delegate read, plus what it produced (the file or
+diff), minus the short reply Claude reads back, divided by 4 to convert characters to tokens.
+For agent CLIs like Codex, which open files themselves, "read" means the files Relay pointed them
+at. The number is measured before Claude reviews the result, and reviewing costs some tokens back.
+Expect the biggest savings from bulk reading and test writing, and the smallest from tiny edits.
 
 ## Tasks, roles and packs
 
@@ -281,6 +298,10 @@ claude plugin validate ./plugins/relay
 ```
 
 The CLI is standard-library Python with no dependencies.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
